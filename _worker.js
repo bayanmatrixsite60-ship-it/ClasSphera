@@ -2,8 +2,8 @@
    Matches index.html 1:1: every /api call the page makes, plus crawlable pages for Googlebot.
    Bindings: DB (D1), KV (KV namespace), AI (Workers AI, optional). ASSETS is automatic on Pages.
    Secrets:  TG_TOKEN, TG_CHAT, MASTER_KEY
-   Optional: GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET (redirect URI: https://classphera.com/api/oauth/google/callback),
-             STRIPE_KEY, TWILIO_SID, TWILIO_TOKEN, TWILIO_FROM
+   Optional: GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET (redirect URI: https://classphera.pages.dev/api/oauth/google/callback),
+             STRIPE_KEY, TWILIO_SID, TWILIO_TOKEN, TWILIO_FROM, SMS_DAILY_CAP (max SMS per day for the whole site, default 500)
    D1 schema (run once):
    CREATE TABLE IF NOT EXISTS payments(id TEXT PRIMARY KEY,sub TEXT,gateway TEXT,item TEXT,usd REAL,txid TEXT,status TEXT,at TEXT);
    CREATE TABLE IF NOT EXISTS audit(id INTEGER PRIMARY KEY AUTOINCREMENT,kind TEXT,detail TEXT,ip TEXT,at TEXT);
@@ -12,7 +12,7 @@
    Real URLs for every public page: /products /solutions /pricing /connected-os /help /feedback /terms /privacy
    Bump LASTMOD below whenever page content changes. */
 
-const SITE='https://classphera.com',APEX='classphera.com',LASTMOD='2026-11-11';
+const SITE='https://classphera.pages.dev',APEX='classphera.pages.dev',LASTMOD='2026-11-11';
 const AL='ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const GATES=['bKash','Nagad','Rocket','SSLCommerz','Visa','Mastercard','Stripe','PayPal','Bitcoin','USDT Vault','Cash','Bank transfer'];
 
@@ -22,11 +22,13 @@ const E=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt
 const hex=b=>[...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,'0')).join('');
 const rnd=n=>hex(crypto.getRandomValues(new Uint8Array(n)));
 const eq=(a,b)=>{a=String(a);b=String(b);let d=a.length^b.length;for(let i=0;i<Math.max(a.length,b.length);i++)d|=(a.charCodeAt(i)||0)^(b.charCodeAt(i)||0);return d===0};
-const tenantOf=h=>{const m=h.toLowerCase().match(/^([a-z0-9-]+)\.classphera\.com$/);return m&&m[1]!=='www'?m[1]:null};
+const sha=async s=>hex(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(s)));
 
 async function tg(env,text){if(!env.TG_TOKEN||!env.TG_CHAT)return false;try{const r=await fetch(`https://api.telegram.org/bot${env.TG_TOKEN}/sendMessage`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({chat_id:env.TG_CHAT,text:text.slice(0,4000),parse_mode:'HTML',disable_web_page_preview:true})});return r.ok}catch{return false}}
 /* fixed-window rate limit: true when the limit is exceeded */
 async function hit(env,key,max,ttl){const k=key+':'+Math.floor(Date.now()/(ttl*1000)),n=(+(await env.KV.get(k))||0)+1;await env.KV.put(k,String(n),{expirationTtl:Math.max(60,ttl*2)});return n>max}
+/* counts n units against a daily budget: true when it would be exceeded */
+async function spend(env,key,n,max,ttl){const k=key+':'+Math.floor(Date.now()/(ttl*1000)),c=+(await env.KV.get(k))||0;if(c+n>max)return true;await env.KV.put(k,String(c+n),{expirationTtl:ttl*2});return false}
 async function alert(env,ip,kind,detail){await env.DB.prepare('INSERT INTO audit(kind,detail,ip,at) VALUES(?,?,?,?)').bind(kind,String(detail).slice(0,300),ip,new Date().toISOString()).run().catch(()=>{});return tg(env,`🚨 <b>${X(kind)}</b>\n${X(detail)}\nIP: ${X(ip)}`)}
 
 /* ───────────────────────── API (exactly what index.html calls) ───────────────────────── */
@@ -95,12 +97,22 @@ async function api(req,env,u,ip){
     if(b.gateway==='Stripe'&&env.STRIPE_KEY){try{const r=await fetch('https://api.stripe.com/v1/checkout/sessions',{method:'POST',headers:{authorization:'Bearer '+env.STRIPE_KEY,'content-type':'application/x-www-form-urlencoded'},body:new URLSearchParams({mode:'payment','line_items[0][price_data][currency]':'usd','line_items[0][price_data][product_data][name]':item,'line_items[0][price_data][unit_amount]':String(Math.round(usd*100)),'line_items[0][quantity]':'1',success_url:u.origin+'/pricing#price',cancel_url:u.origin+'/pricing#price','metadata[payment_id]':id})});url=(await r.json()).url||null}catch{url=null}}
     await tg(env,`💳 <b>Payment ${id}</b>\n${X(item)} · $${usd}\n${X(b.gateway)} · TxID ${X(txid||'-')}\nWorkspace: ${X(sub||'visitor')}${b.institutionId?' · '+X(String(b.institutionId).slice(0,40)):''}`);
     return J({status:'pending',url,message:url?'Redirecting to secure checkout':'Payment recorded. Access activates once the founder verifies it.'})}
-   case '/api/notify':{ /* {sub,messages:[{to,sender,text}]} → {sent,failed}; all failed → 502 so the page says "Nothing was sent" */
+   case '/api/notify':{ /* {sub,id,key,messages:[{to,name,status,inst}]} → {sent,failed}. The server builds the SMS text itself; nobody can send free text. */
     if(!env.TWILIO_SID||!env.TWILIO_TOKEN||!env.TWILIO_FROM)return J({error:'SMS provider not configured'},503);
+    const sub=ws(b.sub),key=String(b.key||'');
+    if(!sub||!/^[0-9a-f]{32,128}$/.test(key))return J({error:'unauthorized'},401);
     if(await hit(env,'sms:'+ip,10,3600))return J({error:'rate limited'},429);
-    if(await hit(env,'smsd:'+ws(b.sub),50,86400))return J({error:'daily limit'},429);
-    const m=(Array.isArray(b.messages)?b.messages:[]).slice(0,100).map(a=>({to:String(a&&a.to||'').replace(/[^\d+]/g,''),text:String(a&&a.text||'').slice(0,300)})).filter(a=>/^\+?\d{7,15}$/.test(a.to)&&a.text);
+    /* per-workspace secret: the first call registers its hash, every later call must present the same key */
+    const kh=await sha(key),rec=JSON.parse(await env.KV.get('nk:'+sub)||'null');
+    if(rec){if(!eq(rec.h,kh)){await alert(env,ip,'SMS key mismatch',`workspace ${sub}`);return J({error:'unauthorized'},403)}}
+    else{if(await hit(env,'nkn:'+ip,3,86400))return J({error:'rate limited'},429);await env.KV.put('nk:'+sub,JSON.stringify({h:kh,id:String(b.id||'').slice(0,40),at:new Date().toISOString()}))}
+    const nm=v=>String(v||'').replace(/[^\p{L}\p{M}\p{N} ,'’()&-]/gu,'').replace(/\s+/g,' ').trim(); /* no links, no symbols */
+    const m=[];
+    for(const a of (Array.isArray(b.messages)?b.messages:[]).slice(0,100)){
+     const to=String(a&&a.to||'').replace(/[^\d+]/g,''),st=String(a&&a.status||'').toLowerCase(),name=nm(a&&a.name).slice(0,60),inst=nm(a&&a.inst).slice(0,80);
+     if(/^\+?\d{7,15}$/.test(to)&&(st==='present'||st==='absent')&&name&&inst)m.push({to,text:`${name} was ${st} today at ${inst}.`})}
     if(!m.length)return J({error:'no valid recipients'},400);
+    if(await spend(env,'smsw:'+sub,m.length,100,86400)||await spend(env,'smsg',m.length,+env.SMS_DAILY_CAP||500,86400))return J({error:'daily limit'},429);
     const r=await Promise.allSettled(m.map(a=>fetch(`https://api.twilio.com/2010-04-01/Accounts/${env.TWILIO_SID}/Messages.json`,{method:'POST',headers:{authorization:'Basic '+btoa(env.TWILIO_SID+':'+env.TWILIO_TOKEN)},body:new URLSearchParams({To:a.to,From:env.TWILIO_FROM,Body:a.text})}).then(x=>{if(!x.ok)throw 0})));
     const sent=r.filter(x=>x.status==='fulfilled').length;
     return J({sent,failed:r.length-sent},sent?200:502)}
@@ -180,13 +192,12 @@ async function page(req,env,u,main,p){
  if(p.v!=='home'){
   rw=rw.on('title',{element(e){e.setInnerContent(p.title)}})
    .on('meta[name="description"]',set('content',p.desc))
-   .on('link[rel="canonical"]',set('href',url))
-   .on('meta[property="og:url"]',set('content',url))
    .on('meta[property="og:title"]',set('content',p.title))
    .on('meta[property="og:description"]',set('content',p.desc))
    .on('meta[name="twitter:title"]',set('content',p.title))
    .on('meta[name="twitter:description"]',set('content',p.desc));
  }
+ rw=rw.on('link[rel="canonical"]',set('href',url)).on('meta[property="og:url"]',set('content',url));
  if(!main)rw=rw.on('meta[name="robots"]',set('content','noindex,nofollow'));
  rw=rw.on('head',{element(e){e.append('<link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="manifest" href="/manifest.webmanifest">'+(p.v==='home'?'':LD(p))+BOOT(p.v),{html:true})}})
   .on('main#app',{element(e){e.setInnerContent(p.body(),{html:true})}}) /* the app replaces this with its own render() */
@@ -220,8 +231,7 @@ async function site(req,env,u,host,main){
 
 export default{async fetch(req,env){
  const u=new URL(req.url),host=u.hostname.toLowerCase(),ip=req.headers.get('cf-connecting-ip')||'unknown',main=host===APEX;
- if(host==='www.'+APEX)return Response.redirect(SITE+u.pathname+u.search,301);
- if(u.protocol==='http:'&&(main||tenantOf(host)))return Response.redirect('https://'+u.host+u.pathname+u.search,301);
+ if(u.protocol==='http:'&&main)return Response.redirect('https://'+u.host+u.pathname+u.search,301);
  if(u.pathname.startsWith('/api/'))return api(req,env,u,ip);
  try{return await site(req,env,u,host,main)}catch(e){return new Response('Server error',{status:500,headers:{'cache-control':'no-store','x-robots-tag':'noindex'}})}
 }};
