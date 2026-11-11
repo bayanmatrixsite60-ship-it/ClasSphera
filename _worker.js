@@ -10,7 +10,9 @@
    Served by this worker, no extra files needed:
    /robots.txt  /sitemap.xml  /manifest.webmanifest  /favicon.svg  /favicon.ico  /.well-known/security.txt
    Real URLs for every public page: /products /solutions /pricing /connected-os /help /feedback /terms /privacy
-   Bump LASTMOD below whenever page content changes. */
+   Bump LASTMOD below whenever page content changes.
+   MOVING TO A .COM LATER: change only SITE and APEX below (and the Google OAuth redirect URI). Canonical, og:url,
+   sitemap, robots and all JSON-LD are generated from them. */
 
 const SITE='https://classphera.pages.dev',APEX='classphera.pages.dev',LASTMOD='2026-11-11';
 const AL='ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -47,6 +49,20 @@ async function oauthCallback(env,u){
  }catch{return back()}
 }
 
+/* guardian/student portal helpers */
+async function GOK(env,ip,sub,key,id){
+ if(!sub||!/^[0-9a-f]{32,128}$/.test(key))return J({error:'unauthorized'},401);
+ const kh=await sha(key),rec=JSON.parse(await env.KV.get('nk:'+sub)||'null');
+ if(rec){if(!eq(rec.h,kh)){await alert(env,ip,'Portal key mismatch',`workspace ${sub}`);return J({error:'unauthorized'},403)}}
+ else{if(await hit(env,'nkn:'+ip,3,86400))return J({error:'rate limited'},429);await env.KV.put('nk:'+sub,JSON.stringify({h:kh,id:String(id||'').slice(0,40),at:new Date().toISOString()}))}
+ return null}
+/* what each role may receive. A student never gets fees, messages, CCTV, ratings, behaviour or attendance. */
+function proj(d,who){
+ d=JSON.parse(JSON.stringify(d||{}));
+ if(who==='student'){const r=d.rec||{},i=d.inst||{},s=d.stu||{};d={v:d.v,at:d.at,inst:{name:i.name,type:i.type,logo:i.logo,cctv:false},stu:{id:s.id,name:s.name,cls:s.cls,house:s.house,photo:s.photo},marks:d.marks||{},rec:{lesson:r.lesson||[],module:r.module||[],task:r.task||[]},quran:d.quran||''}}
+ else if(!(d.inst&&d.inst.cctv))d.cam='';
+ return d}
+
 async function api(req,env,u,ip){
  try{
   const o=req.headers.get('origin');let foreign=false;
@@ -60,7 +76,7 @@ async function api(req,env,u,ip){
    return J({url:'https://accounts.google.com/o/oauth2/v2/auth?'+new URLSearchParams({client_id:env.GOOGLE_CLIENT_ID,redirect_uri:u.origin+'/api/oauth/google/callback',response_type:'code',scope:'openid email profile',state:st,prompt:'select_account'})})}
   if(req.method==='GET'&&p==='/api/oauth/google/callback')return oauthCallback(env,u); /* → /#oauth:<code> */
   if(req.method!=='POST')return J({error:'not found'},404);
-  const raw=await req.text();if(raw.length>262144)return J({error:'too large'},413);
+  const raw=await req.text();if(raw.length>(p==='/api/g/sync'?12e6:262144))return J({error:'too large'},413);
   let b={};try{b=JSON.parse(raw||'{}')}catch{}if(!b||typeof b!=='object'||Array.isArray(b))b={};
   const ws=s=>String(s||'').toLowerCase().replace(/[^a-z0-9-]/g,'').slice(0,60);
   switch(p){
@@ -89,13 +105,13 @@ async function api(req,env,u,ip){
      if(!(await env.KV.get('id:'+id))){await env.KV.put('id:'+id,'1');return J({id})}}
     return J({error:'retry'},503)}
    case '/api/checkout':{ /* {gateway,item,usd,txid,sub,institutionId} → {status,url,message} */
-    const usd=Math.round(+b.usd*100)/100,item=String(b.item||'').slice(0,100);
-    if(!GATES.includes(b.gateway)||!(usd>0&&usd<=5000)||!item)return J({error:'invalid payment'},400);
+    const cur=/^[A-Z]{3}$/.test(String(b.cur||''))?b.cur:'USD',usd=Math.round(+b.usd*100)/100,item=(String(b.item||'').slice(0,100)+(cur==='USD'?'':' ['+cur+']')).trim();
+    if(!GATES.includes(b.gateway)||!(usd>0&&usd<=(cur==='USD'?5000:5e6))||!item)return J({error:'invalid payment'},400);
     if(await hit(env,'pay:'+ip,20,3600))return J({error:'rate limited'},429);
     const id='PAY-'+rnd(5).toUpperCase(),sub=String(b.sub||'').slice(0,60)||null,txid=String(b.txid||'').slice(0,80);let url=null;
     await env.DB.prepare('INSERT INTO payments VALUES(?,?,?,?,?,?,?,?)').bind(id,sub,b.gateway,item,usd,txid,'pending',new Date().toISOString()).run();
-    if(b.gateway==='Stripe'&&env.STRIPE_KEY){try{const r=await fetch('https://api.stripe.com/v1/checkout/sessions',{method:'POST',headers:{authorization:'Bearer '+env.STRIPE_KEY,'content-type':'application/x-www-form-urlencoded'},body:new URLSearchParams({mode:'payment','line_items[0][price_data][currency]':'usd','line_items[0][price_data][product_data][name]':item,'line_items[0][price_data][unit_amount]':String(Math.round(usd*100)),'line_items[0][quantity]':'1',success_url:u.origin+'/pricing#price',cancel_url:u.origin+'/pricing#price','metadata[payment_id]':id})});url=(await r.json()).url||null}catch{url=null}}
-    await tg(env,`💳 <b>Payment ${id}</b>\n${X(item)} · $${usd}\n${X(b.gateway)} · TxID ${X(txid||'-')}\nWorkspace: ${X(sub||'visitor')}${b.institutionId?' · '+X(String(b.institutionId).slice(0,40)):''}`);
+    if(b.gateway==='Stripe'&&env.STRIPE_KEY){try{const r=await fetch('https://api.stripe.com/v1/checkout/sessions',{method:'POST',headers:{authorization:'Bearer '+env.STRIPE_KEY,'content-type':'application/x-www-form-urlencoded'},body:new URLSearchParams({mode:'payment','line_items[0][price_data][currency]':cur.toLowerCase(),'line_items[0][price_data][product_data][name]':item,'line_items[0][price_data][unit_amount]':String(Math.round(usd*100)),'line_items[0][quantity]':'1',success_url:u.origin+'/pricing#price',cancel_url:u.origin+'/pricing#price','metadata[payment_id]':id})});url=(await r.json()).url||null}catch{url=null}}
+    await tg(env,`💳 <b>Payment ${id}</b>\n${X(item)} · ${cur==='USD'?'$':cur+' '}${usd}\n${X(b.gateway)} · TxID ${X(txid||'-')}\nWorkspace: ${X(sub||'visitor')}${b.institutionId?' · '+X(String(b.institutionId).slice(0,40)):''}`);
     return J({status:'pending',url,message:url?'Redirecting to secure checkout':'Payment recorded. Access activates once the founder verifies it.'})}
    case '/api/notify':{ /* {sub,id,key,messages:[{to,name,status,inst}]} → {sent,failed}. The server builds the SMS text itself; nobody can send free text. */
     if(!env.TWILIO_SID||!env.TWILIO_TOKEN||!env.TWILIO_FROM)return J({error:'SMS provider not configured'},503);
@@ -110,12 +126,47 @@ async function api(req,env,u,ip){
     const m=[];
     for(const a of (Array.isArray(b.messages)?b.messages:[]).slice(0,100)){
      const to=String(a&&a.to||'').replace(/[^\d+]/g,''),st=String(a&&a.status||'').toLowerCase(),name=nm(a&&a.name).slice(0,60),inst=nm(a&&a.inst).slice(0,80);
-     if(/^\+?\d{7,15}$/.test(to)&&(st==='present'||st==='absent')&&name&&inst)m.push({to,text:`${name} was ${st} today at ${inst}.`})}
+     if(/^\+?\d{7,15}$/.test(to)&&(st==='present'||st==='absent'||st==='late')&&name&&inst)m.push({to,text:`${name} was ${st} today at ${inst}.`})}
     if(!m.length)return J({error:'no valid recipients'},400);
     if(await spend(env,'smsw:'+sub,m.length,100,86400)||await spend(env,'smsg',m.length,+env.SMS_DAILY_CAP||500,86400))return J({error:'daily limit'},429);
     const r=await Promise.allSettled(m.map(a=>fetch(`https://api.twilio.com/2010-04-01/Accounts/${env.TWILIO_SID}/Messages.json`,{method:'POST',headers:{authorization:'Basic '+btoa(env.TWILIO_SID+':'+env.TWILIO_TOKEN)},body:new URLSearchParams({To:a.to,From:env.TWILIO_FROM,Body:a.text})}).then(x=>{if(!x.ok)throw 0})));
     const sent=r.filter(x=>x.status==='fulfilled').length;
     return J({sent,failed:r.length-sent},sent?200:502)}
+   case '/api/g/sync':{ /* admin browser → {sub,id,key,students:[{id,ph,gh,gs,sh,ss,d}]}. One snapshot per student; PIN hashes only. */
+    const sub=ws(b.sub),key=String(b.key||''),deny=await GOK(env,ip,sub,key,b.id);if(deny)return deny;
+    if(await hit(env,'gsy:'+sub,60,3600))return J({error:'rate limited'},429);
+    const out={},hx=(v,n)=>typeof v==='string'&&new RegExp('^[0-9a-f]{'+n+'}$').test(v);
+    for(const s of (Array.isArray(b.students)?b.students:[]).slice(0,500)){
+     const id=String(s&&s.id||'').toUpperCase();if(!/^[A-Z0-9-]{1,24}$/.test(id)||!s.d||typeof s.d!=='object')continue;
+     const d=JSON.stringify(s.d);if(d.length>60000)continue;
+     out[id]={ph:String(s.ph||'').replace(/\D/g,'').slice(-10),gh:hx(s.gh,64)?s.gh:'',gs:hx(s.gs,16)?s.gs:'',sh:hx(s.sh,64)?s.sh:'',ss:hx(s.ss,16)?s.ss:'',d:s.d}}
+    const v=JSON.stringify({at:Date.now(),s:out});if(v.length>2e7)return J({error:'too large'},413);
+    await env.KV.put('gs:'+sub,v);return J({ok:true,count:Object.keys(out).length})}
+   case '/api/g/login':{ /* {sub,sid,who,phone,pin} → {token,who,d}: only that student's own data, trimmed for the role */
+    const sub=ws(String(b.sub||'').toLowerCase().replace(/\.classphera\.[a-z.]+$/,'')),sid=String(b.sid||'').trim().toUpperCase().slice(0,24),who=b.who==='student'?'student':'guardian',pin=String(b.pin||'').slice(0,40);
+    if(await hit(env,'gl:'+ip,20,3600))return J({error:'Too many attempts. Try again later.'},429);
+    const fk='gf:'+sub+':'+sid+':'+who,fails=+(await env.KV.get(fk))||0;
+    if(fails>=5)return J({error:'Too many wrong attempts. Wait 15 minutes or ask the institution to reset access.'},429);
+    const db=JSON.parse(await env.KV.get('gs:'+sub)||'null'),s=db&&db.s&&db.s[sid];
+    const salt=s?(who==='student'?s.ss:s.gs):'0'.repeat(16),want=s?(who==='student'?s.sh:s.gh):'0'.repeat(64);
+    const okPin=eq(await sha(pin+':'+salt),want)&&!!s&&/^[0-9a-f]{64}$/.test(want)&&want!=='0'.repeat(64),okPh=who==='student'||(!!s&&s.ph.length>=7&&String(b.phone||'').replace(/\D/g,'').slice(-10)===s.ph);
+    if(!(okPin&&okPh)){await env.KV.put(fk,String(fails+1),{expirationTtl:900});return J({error:'Details did not match. Check the ID, mobile number and PIN.'},401)}
+    await env.KV.delete(fk);
+    const token=rnd(24);await env.KV.put('gt:'+token,JSON.stringify({sub,sid,who}),{expirationTtl:43200});
+    return J({token,who,d:proj(s.d,who)})}
+   case '/api/g/data':{ /* {token} → {d} */
+    const t=JSON.parse(await env.KV.get('gt:'+String(b.token||'').slice(0,60))||'null');if(!t)return J({error:'expired'},401);
+    const db=JSON.parse(await env.KV.get('gs:'+t.sub)||'null'),s=db&&db.s&&db.s[t.sid];if(!s)return J({error:'expired'},401);
+    return J({d:proj(s.d,t.who)})}
+   case '/api/g/send':{ /* guardian → staff message, picked up by the institution's browser */
+    const tk=String(b.token||'').slice(0,60),t=JSON.parse(await env.KV.get('gt:'+tk)||'null');if(!t||t.who!=='guardian')return J({error:'expired'},401);
+    const x=String(b.text||'').replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g,'').trim().slice(0,1000);if(!x)return J({error:'empty'},400);
+    if(await hit(env,'gsd:'+tk,30,3600))return J({error:'rate limited'},429);
+    const k='gi:'+t.sub,a=JSON.parse(await env.KV.get(k)||'[]'),m={id:rnd(6),sid:t.sid,x,at:Date.now()};a.push(m);
+    await env.KV.put(k,JSON.stringify(a.slice(-300)));return J({ok:true,id:m.id,at:m.at})}
+   case '/api/g/inbox':{ /* institution browser → pending guardian messages (then cleared) */
+    const sub=ws(b.sub),deny=await GOK(env,ip,sub,String(b.key||''),b.id);if(deny)return deny;
+    const k='gi:'+sub,a=JSON.parse(await env.KV.get(k)||'[]');if(a.length)await env.KV.delete(k);return J({msgs:a})}
    case '/api/ai':{ /* {sub,subject,chapter,difficulty,kind} → {text} */
     if(!env.AI)return J({error:'AI not configured'},503);
     if(await hit(env,'ai:'+ip,30,3600))return J({error:'rate limited'},429);
@@ -137,7 +188,7 @@ const HERO='One Platform. Complete Control of Your Institution.';
 const INTRO='One workspace for enrollment, attendance, marks, fees and guardian communication. Every institution gets its own isolated subdomain and starts completely empty.';
 const PAYTXT='Pay with bKash, Nagad, Rocket, SSLCommerz, Visa, Mastercard, Stripe, PayPal, Bitcoin or USDT Vault.';
 const PRODS=[['Enrollment','Admissions, student profiles and guardian records.'],['Attendance Support','ID-card scan logs for students and ustads, with guardian alerts.'],['Learning Management','Routines, homework diaries and teacher feedback.'],['Assessment','Digital marksheets and instant merit lists.'],['Connected Intelligence','AI question papers, syllabus outlines and lesson plans.'],['Analytics and Insights','Progress graphs and class averages.'],['Finance Vault','Encrypted ledger, fee collection and receipts.'],['Secure Messaging','Guardian to teacher conversations.'],['Staff Management','Ustad records, salaries and credentials.'],['Security Center','Role-based access, tamper detection and threat alerts.']];
-const PLANS=[['Starter','Up to 200 students',29,['Student and staff directory','Attendance','Marksheets']],['Institution','Up to 1,500 students',79,['Everything in Starter','AI paper generator','Encrypted finance vault','Role-based team access']],['Sovereign','Unlimited, multi-campus',199,['Everything in Institution','Custom domain','Priority support']]];
+const PLANS=[['Free','Up to 200 student records',0,['Student and staff directory','Attendance and marksheets','Isolated workspace and unique ID','Community support']],['Starter','Up to 500 students',29,['Student and staff directory','Attendance','Marksheets']],['Institution','Up to 1,500 students',79,['Everything in Starter','AI paper generator','Encrypted finance vault','Role-based team access']],['Sovereign','Unlimited, multi-campus',199,['Everything in Institution','Custom domain','Priority support']]];
 const SOLS=[['Schools','Class routines, homework diaries, guardian alerts and report cards.'],['Madrassas','Hostel and meal tracking, Quran progress, Sadaqah ledger and ustad records.'],['Coaching centers','Batch attendance, mock tests and recurring fees.'],['Colleges','Departments, semester results, fee collection and staff payroll.'],['Universities','Faculty, department, program and batch hierarchy at large scale.']];
 const ALLSOL=[['Student records','Profiles, guardians, residence and results.'],['Staff management','Credentials, salaries and joining dates.'],['Financial ledgers','Income, expenses, dues, loans and receipts.'],['Institutional hierarchies','Campus, faculty, department, class and batch.']];
 const OSL=[['Data layer','One isolated workspace per institution, stored under its own subdomain.'],['Identity layer','Four roles with separate permissions and token sessions that end on inactivity.'],['Intelligence layer','AI papers, lesson plans, merit lists and progress analytics.'],['Communication layer','Guardian alerts under your branded sender name and secure messaging.']];
@@ -150,15 +201,15 @@ const FBTXT='Sent privately to the founder with your institution’s details.';
 
 const grid=(a,c='md:grid-cols-2')=>`<div class="grid ${c} gap-4">${a.map(x=>`<div class="glass p-5"><h3 class="font-bold">${E(x[0])}</h3><p class="text-sm mu mt-1">${E(x[1])}</p></div>`).join('')}</div>`;
 const trust=()=>`<div class="grid md:grid-cols-2 gap-4">${TRUST.map(t=>`<div class="glass p-5"><h3 class="font-bold">${E(t[0])}</h3><p class="text-sm mu mt-1">${E(t[1])}</p><p class="text-sm mt-2">${E(t[2])}</p><ul class="text-sm mt-2">${t[3].map(x=>`<li>✓ ${E(x)}</li>`).join('')}</ul></div>`).join('')}</div>`;
-const plans=()=>`<div class="grid md:grid-cols-3 gap-4">${PLANS.map(p=>`<div class="glass p-5"><h3 class="font-bold text-lg">${E(p[0])}</h3><p class="text-xs mu">${E(p[1])}</p><p class="text-3xl font-bold my-3">$${p[2]}/month</p><p class="text-xs">Yearly billing: $${p[2]*10}/year, saves $${p[2]*2} a year</p><ul class="text-sm mt-2">${p[3].map(x=>`<li>✓ ${E(x)}</li>`).join('')}</ul></div>`).join('')}</div><p class="text-xs mu text-center mt-4">${E(PAYTXT)}</p>`;
+const plans=()=>`<div class="grid md:grid-cols-2 lg:grid-cols-4 gap-4">${PLANS.map(p=>`<div class="glass p-5"><h3 class="font-bold text-lg">${E(p[0])}</h3><p class="text-xs mu">${E(p[1])}</p><p class="text-3xl font-bold my-3">${p[2]?`$${p[2]}/month`:'$0'}</p><p class="text-xs">${p[2]?`Yearly billing: $${p[2]*10}/year, saves $${p[2]*2} a year`:'Free forever'}</p><ul class="text-sm mt-2">${p[3].map(x=>`<li>✓ ${E(x)}</li>`).join('')}</ul></div>`).join('')}</div><p class="text-xs mu text-center mt-4">${E(PAYTXT)}</p>`;
 const H1=t=>`<h1 class="text-2xl md:text-3xl font-extrabold mb-4">${E(t)}</h1>`,H2=t=>`<h2 class="text-xl md:text-2xl font-extrabold mt-12 mb-4">${E(t)}</h2>`;
 const paras=a=>`<div class="glass p-5 text-sm space-y-3 max-w-2xl">${a.map(x=>`<p>${E(x)}</p>`).join('')}</div>`;
 
 const PAGES=[
- {v:'home',path:'/',crumb:'Home',pr:'1.0',cf:'weekly',body:()=>`<h1 class="text-3xl font-extrabold">${E(HERO)}</h1><p class="mt-5 mu max-w-xl">${E(INTRO)}</p>${H2('Everything an institution runs on')}${grid(PRODS,'sm:grid-cols-2 lg:grid-cols-3')}${H2('Built for isolation and trust')}${trust()}${H2('Pricing')}${plans()}`},
+ {v:'home',path:'/',crumb:'Home',pr:'1.0',cf:'weekly',title:'ClasSphera | Institution Management Platform by QVMPXT',desc:'ClasSphera (Classphera) by QVMPXT: one secure platform for schools, madrasahs, coaching centers, colleges and universities. Student records, attendance, marksheets, AI question papers, finance vault and guardian messaging.',body:()=>`<h1 class="text-3xl font-extrabold">${E(HERO)}</h1><p class="mt-5 mu max-w-xl">${E(INTRO)}</p>${H2('Everything an institution runs on')}${grid(PRODS,'sm:grid-cols-2 lg:grid-cols-3')}${H2('Built for isolation and trust')}${trust()}${H2('Pricing')}${plans()}`},
  {v:'products',path:'/products',crumb:'Products',pr:'0.9',cf:'monthly',title:'Products | ClasSphera Institution Management Modules',desc:'Ten connected ClasSphera modules: enrollment, attendance, learning management, assessment, AI tools, analytics, finance vault, messaging, staff and security.',body:()=>`${H1('Products')}<p class="text-sm mu mb-5">Ten connected modules, one isolated workspace per institution.</p>${grid(PRODS,'sm:grid-cols-2 lg:grid-cols-3')}`},
  {v:'sol',path:'/solutions',crumb:'Solutions',pr:'0.9',cf:'monthly',title:'Solutions for Schools, Madrasahs and Universities | ClasSphera',desc:'ClasSphera fits schools, madrasahs, coaching centers, colleges and universities with student records, staff management, financial ledgers and institutional hierarchies.',body:()=>`${H1('Solutions')}${grid(SOLS,'md:grid-cols-2 lg:grid-cols-3')}${H2('Included in every solution')}${grid(ALLSOL,'sm:grid-cols-2 lg:grid-cols-4')}`},
- {v:'price',path:'/pricing',crumb:'Pricing',pr:'0.9',cf:'monthly',title:'Pricing | ClasSphera Plans from $29 per month',desc:'ClasSphera Starter $29, Institution $79 and Sovereign $199 per month. Pay with bKash, Nagad, Rocket, SSLCommerz, Visa, Mastercard, Stripe, PayPal, Bitcoin or USDT.',body:()=>`${H1('Pricing')}${plans()}`},
+ {v:'price',path:'/pricing',crumb:'Pricing',pr:'0.9',cf:'monthly',title:'Pricing | ClasSphera Free Plan and Paid Plans',desc:'ClasSphera Free plan up to 200 student records, then Starter $29, Institution $79 and Sovereign $199 per month. Pay with bKash, Nagad, Rocket, SSLCommerz, Visa, Mastercard, Stripe, PayPal, Bitcoin or USDT.',body:()=>`${H1('Pricing')}${plans()}`},
  {v:'os',path:'/connected-os',crumb:'Connected OS',pr:'0.7',cf:'monthly',title:'Connected OS | ClasSphera by QVMPXT',desc:'The ClasSphera Connected OS: data, identity, intelligence and communication layers working together for every institution.',body:()=>`${H1('Connected OS')}${grid(OSL)}`},
  {v:'help',path:'/help',crumb:'Help center',pr:'0.6',cf:'monthly',title:'Help Center | ClasSphera',desc:'Set up your institution, add team members, students and staff, enter marks, collect fees and recover administrator access in ClasSphera.',body:()=>`${H1('Help center')}<div class="space-y-3">${HELP.map(x=>`<div class="glass p-4"><h2 class="font-bold">${E(x[0])}</h2><p class="mt-2 text-sm mu">${E(x[1])}</p></div>`).join('')}</div>`},
  {v:'fb',path:'/feedback',crumb:'Feedback portal',pr:'0.3',cf:'yearly',title:'Feedback Portal | ClasSphera',desc:'Send ideas, problems or praise privately to the ClasSphera founder together with your institution’s details.',body:()=>`${H1('Feedback portal')}<p class="text-sm mb-4 mu">${E(FBTXT)}</p>`},
@@ -176,8 +227,15 @@ const FAVICON='<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" fil
 
 const NAV=`<nav aria-label="ClasSphera pages" style="max-width:72rem;margin:0 auto;padding:1rem 1rem 2rem;display:flex;flex-wrap:wrap;gap:.5rem 1.25rem;justify-content:center;font-size:.8rem">${PAGES.map(p=>`<a href="${p.path}" data-v="${p.v}" style="color:var(--mu)">${E(p.crumb)}</a>`).join('')}</nav>`;
 const BOOT=v=>`<script>(function(){var P=${JSON.stringify(VIEWPATH)},h=history,ps=h.pushState,rs=h.replaceState;function f(u){if(typeof u==='string'&&u.charAt(0)==='#'){return(P[u.slice(1).split(':')[0]]||'/')+u}return u}h.pushState=function(s,t,u){return ps.call(h,s,t,f(u))};h.replaceState=function(s,t,u){return rs.call(h,s,t,f(u))};var v=${JSON.stringify(v)};if(v!=='home'&&!location.hash){try{rs.call(h,{d:0},'',location.pathname+'#'+v)}catch(e){}}document.addEventListener('click',function(e){var a=e.target.closest&&e.target.closest('a[data-v]');if(a&&e.button===0&&!e.metaKey&&!e.ctrlKey&&!e.shiftKey&&typeof go==='function'){e.preventDefault();go(a.getAttribute('data-v'))}})})();</script>`;
-const LD=p=>{const g=[{'@type':'WebPage','@id':SITE+p.path+'#webpage',url:SITE+p.path,name:p.title,description:p.desc,isPartOf:{'@id':SITE+'/#website'},inLanguage:'en'},{'@type':'BreadcrumbList',itemListElement:[{'@type':'ListItem',position:1,name:'Home',item:SITE+'/'},{'@type':'ListItem',position:2,name:p.crumb,item:SITE+p.path}]}];
- if(p.v==='price')g.push({'@type':'SoftwareApplication',name:'ClasSphera',applicationCategory:'EducationalApplication',operatingSystem:'Web',offers:PLANS.map(x=>({'@type':'Offer',name:x[0],description:x[1],price:String(x[2]),priceCurrency:'USD'}))});
+/* Structured data is built here for EVERY page from SITE, so the page's own copy can never disagree with the live domain. */
+const LD=p=>{
+ const org={'@type':'Organization','@id':SITE+'/#org',name:'QVMPXT',url:SITE+'/',brand:{'@type':'Brand',name:'ClasSphera'},email:'marufchowdhury579@gmail.com',telephone:'+8801347272307'};
+ const web={'@type':'WebSite','@id':SITE+'/#website',url:SITE+'/',name:'ClasSphera',alternateName:['Classphera','ClassSphera','Class Sphera','classphera'],publisher:{'@id':SITE+'/#org'},inLanguage:'en'};
+ const g=[web,org,{'@type':'WebPage','@id':SITE+p.path+'#webpage',url:SITE+p.path,name:p.title,description:p.desc,isPartOf:{'@id':SITE+'/#website'},inLanguage:'en'}];
+ if(p.v!=='home')g.push({'@type':'BreadcrumbList',itemListElement:[{'@type':'ListItem',position:1,name:'Home',item:SITE+'/'},{'@type':'ListItem',position:2,name:p.crumb,item:SITE+p.path}]});
+ const app={'@type':'SoftwareApplication',name:'ClasSphera',applicationCategory:'EducationalApplication',operatingSystem:'Web',url:SITE+'/',publisher:{'@id':SITE+'/#org'}};
+ if(p.v==='price')app.offers=PLANS.map(x=>({'@type':'Offer',name:x[0],description:x[1],price:String(x[2]),priceCurrency:'USD'}));
+ if(p.v==='home'||p.v==='price')g.push(app);
  return '<script type="application/ld+json">'+JSON.stringify({'@context':'https://schema.org','@graph':g}).replace(/</g,'\\u003c')+'</script>'};
 
 const htmlHeaders=(main,more={})=>({'content-type':'text/html; charset=utf-8','cache-control':'public, max-age=0, must-revalidate','x-content-type-options':'nosniff','referrer-policy':'strict-origin-when-cross-origin','strict-transport-security':'max-age=31536000',...(main?{}:{'x-robots-tag':'noindex, nofollow'}),...more});
@@ -197,9 +255,10 @@ async function page(req,env,u,main,p){
    .on('meta[name="twitter:title"]',set('content',p.title))
    .on('meta[name="twitter:description"]',set('content',p.desc));
  }
- rw=rw.on('link[rel="canonical"]',set('href',url)).on('meta[property="og:url"]',set('content',url));
+ rw=rw.on('link[rel="canonical"]',set('href',url)).on('meta[property="og:url"]',set('content',url))
+  .on('script[type="application/ld+json"]',{element(e){e.remove()}}); /* replaced below by one graph built from SITE */
  if(!main)rw=rw.on('meta[name="robots"]',set('content','noindex,nofollow'));
- rw=rw.on('head',{element(e){e.append('<link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="manifest" href="/manifest.webmanifest">'+(p.v==='home'?'':LD(p))+BOOT(p.v),{html:true})}})
+ rw=rw.on('head',{element(e){e.append('<link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="manifest" href="/manifest.webmanifest">'+LD(p)+BOOT(p.v),{html:true})}})
   .on('main#app',{element(e){e.setInnerContent(p.body(),{html:true})}}) /* the app replaces this with its own render() */
   .on('footer#foot',{element(e){e.after(NAV,{html:true})}});
  const out=rw.transform(base);
@@ -215,6 +274,7 @@ async function site(req,env,u,host,main){
  if(path==='/favicon.svg')return file(FAVICON,'image/svg+xml',main,86400);
  if(path==='/favicon.ico')return Response.redirect(u.origin+'/favicon.svg',301);
  if(path==='/.well-known/security.txt')return file(`Contact: mailto:marufchowdhury579@gmail.com\nExpires: ${new Date(Date.now()+364*864e5).toISOString()}\nPreferred-Languages: en, bn\nCanonical: ${SITE}/.well-known/security.txt\n`,'text/plain',main);
+ if(path==='/sw.js')return file("self.addEventListener('install',()=>self.skipWaiting());self.addEventListener('activate',e=>e.waitUntil(self.clients.claim()));self.addEventListener('fetch',()=>{});",'application/javascript',main,0);
  if(ALIAS[path])return Response.redirect(u.origin+ALIAS[path]+u.search,301);
  if(path.length>1&&path.endsWith('/'))return Response.redirect(u.origin+path.replace(/\/+$/,'')+u.search,301);
  const p=BYPATH[path];
