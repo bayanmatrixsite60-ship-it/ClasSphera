@@ -1,22 +1,32 @@
-/* ClasSphera backend · QVMPXT · Cloudflare Pages advanced mode (_worker.js)
+/* ClasSphera backend · QVMPXT · Cloudflare Pages advanced mode (_worker.js)  ·  v2.5.0
    Matches index.html 1:1: every /api call the page makes, plus crawlable pages for Googlebot.
-   Bindings: DB (D1), KV (KV namespace), AI (Workers AI, optional). ASSETS is automatic on Pages.
+   Bindings: DB (D1), KV (KV namespace), AI (Workers AI, optional), R2 (R2 bucket for audit logs, optional). ASSETS is automatic on Pages.
    Secrets:  TG_TOKEN, TG_CHAT, MASTER_KEY
    Optional: GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET (redirect URI: https://classphera.pages.dev/api/oauth/google/callback),
              STRIPE_KEY, TWILIO_SID, TWILIO_TOKEN, TWILIO_FROM, SMS_DAILY_CAP (max SMS per day for the whole site, default 500)
-   D1 schema (run once):
-   CREATE TABLE IF NOT EXISTS payments(id TEXT PRIMARY KEY,sub TEXT,gateway TEXT,item TEXT,usd REAL,txid TEXT,status TEXT,at TEXT);
-   CREATE TABLE IF NOT EXISTS audit(id INTEGER PRIMARY KEY AUTOINCREMENT,kind TEXT,detail TEXT,ip TEXT,at TEXT);
+   NEW in v2.5.0 (all optional, the page falls back to test mode without them):
+             JWT_SECRET (HS256 signing key for session tokens; falls back to MASTER_KEY)
+             MAIL_KEY + MAIL_FROM (Resend API key and a verified sender, e.g. "ClasSphera <no-reply@classphera.com>") for e-mail OTP
+             OTP_DAILY_CAP (max OTP messages per day for the whole site, default 2000)
+   Database: the schema is created and upgraded AUTOMATICALLY by migrate() below (schema_meta table, versions 1.0 → 1.3).
+             You no longer have to run any SQL by hand; old rows are kept when a newer version is deployed.
    Served by this worker, no extra files needed:
    /robots.txt  /sitemap.xml  /manifest.webmanifest  /favicon.svg  /favicon.ico  /.well-known/security.txt
    Real URLs for every public page: /products /solutions /pricing /connected-os /help /feedback /terms /privacy
+   Subdomains: every <name>.<root> (root in ROOTS below) serves the app shell and index.html opens that institution's SECURE LOGIN
+   (never the sign-up form). Add a wildcard DNS record "*" (proxied) and a Pages custom domain / route "*.classphera.com/*".
    Bump LASTMOD below whenever page content changes.
    MOVING TO A .COM LATER: change only SITE and APEX below (and the Google OAuth redirect URI). Canonical, og:url,
    sitemap, robots and all JSON-LD are generated from them. */
 
 const SITE='https://classphera.pages.dev',APEX='classphera.pages.dev',LASTMOD='2026-11-11';
+const APP_V='2.5.0';
+const ROOTS=[APEX,'classphera.com','classsphera.com']; /* hosts whose single-label subdomains are institution portals */
 const AL='ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const GATES=['bKash','Nagad','Rocket','SSLCommerz','Visa','Mastercard','Stripe','PayPal','Bitcoin','USDT Vault','Cash','Bank transfer'];
+const SUBRX=/^[a-z0-9](?:[a-z0-9-]{1,28}[a-z0-9])$/; /* 3–30 chars, lowercase letters, digits and hyphens only */
+const MAILRX=/^[^@\s]+@[^@\s]+\.[A-Za-z]{2,}$/;
+const RESERVED=['www','app','api','admin','mail','ftp','root','support','status','cdn','static','login','signup','classphera','classsphera','qvmpxt'];
 
 const J=(o,s=200)=>new Response(JSON.stringify(o),{status:s,headers:{'content-type':'application/json; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff','x-robots-tag':'noindex, nofollow'}});
 const X=s=>String(s??'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
@@ -25,13 +35,53 @@ const hex=b=>[...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,'0')).join(
 const rnd=n=>hex(crypto.getRandomValues(new Uint8Array(n)));
 const eq=(a,b)=>{a=String(a);b=String(b);let d=a.length^b.length;for(let i=0;i<Math.max(a.length,b.length);i++)d|=(a.charCodeAt(i)||0)^(b.charCodeAt(i)||0);return d===0};
 const sha=async s=>hex(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(s)));
+const u8=s=>new TextEncoder().encode(s);
+const b64u=b=>btoa(String.fromCharCode(...new Uint8Array(b))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+const unb64u=s=>atob(s.replace(/-/g,'+').replace(/_/g,'/')+'==='.slice((s.length+3)%4));
+
+/* ───────────── JWT (HS256) · session tokens bound to an institution and a device ───────────── */
+async function jkey(env){const s=env.JWT_SECRET||env.MASTER_KEY;if(!s)throw new Error('no jwt secret');return crypto.subtle.importKey('raw',u8(s),{name:'HMAC',hash:'SHA-256'},false,['sign']);}
+async function signJWT(env,claims){const h=b64u(u8(JSON.stringify({alg:'HS256',typ:'JWT'}))),p=b64u(u8(JSON.stringify(claims)));return h+'.'+p+'.'+b64u(await crypto.subtle.sign('HMAC',await jkey(env),u8(h+'.'+p)))}
+async function verifyJWT(env,t){try{const a=String(t||'').split('.');if(a.length!==3)return null;const s=b64u(await crypto.subtle.sign('HMAC',await jkey(env),u8(a[0]+'.'+a[1])));if(!eq(s,a[2]))return null;const c=JSON.parse(unb64u(a[1]));if(!c||!SUBRX.test(String(c.sub||''))||!(c.exp>Math.floor(Date.now()/1000)))return null;return c}catch{return null}}
+
+/* ───────────── Data layer: every D1 call lives here, so the engine can later be swapped (Turso, Neon, DynamoDB) by re-implementing this block only ───────────── */
+const SCHEMA=[
+ ['1.0',['CREATE TABLE IF NOT EXISTS payments(id TEXT PRIMARY KEY,sub TEXT,gateway TEXT,item TEXT,usd REAL,txid TEXT,status TEXT,at TEXT)','CREATE TABLE IF NOT EXISTS audit(id INTEGER PRIMARY KEY AUTOINCREMENT,kind TEXT,detail TEXT,ip TEXT,at TEXT)']],
+ ['1.1',['CREATE TABLE IF NOT EXISTS devices(sub TEXT NOT NULL,fp TEXT NOT NULL,first_seen TEXT,last_seen TEXT,ip TEXT,trusted INTEGER DEFAULT 1,PRIMARY KEY(sub,fp))','CREATE INDEX IF NOT EXISTS idx_devices_sub ON devices(sub)']],
+ ['1.2',['CREATE TABLE IF NOT EXISTS institutions(sub TEXT PRIMARY KEY,name TEXT,itype TEXT,country TEXT,created_at TEXT)']],
+ ['1.3',['CREATE INDEX IF NOT EXISTS idx_audit_at ON audit(at)','CREATE INDEX IF NOT EXISTS idx_payments_sub ON payments(sub)']]
+];
+let MIGRATED=null;
+function migrate(env){
+ if(MIGRATED)return MIGRATED;
+ MIGRATED=(async()=>{
+  await env.DB.prepare('CREATE TABLE IF NOT EXISTS schema_meta(k TEXT PRIMARY KEY,v TEXT)').run();
+  const r=await env.DB.prepare("SELECT v FROM schema_meta WHERE k='version'").first(),cur=r?r.v:null;
+  let at=cur?SCHEMA.findIndex(s=>s[0]===cur):-1;if(cur&&at<0)at=SCHEMA.length-1; /* a newer version already ran: never downgrade */
+  for(let i=at+1;i<SCHEMA.length;i++){
+   await env.DB.batch(SCHEMA[i][1].map(q=>env.DB.prepare(q)));
+   await env.DB.prepare("INSERT INTO schema_meta(k,v) VALUES('version',?) ON CONFLICT(k) DO UPDATE SET v=excluded.v").bind(SCHEMA[i][0]).run();
+  }
+ })().catch(e=>{MIGRATED=null;throw e});
+ return MIGRATED}
+const dbAudit=(env,kind,detail,ip)=>env.DB.prepare('INSERT INTO audit(kind,detail,ip,at) VALUES(?,?,?,?)').bind(kind,String(detail).slice(0,300),ip,new Date().toISOString()).run().catch(()=>{});
+/* row-level isolation: every tenant query below is pinned to the institution id (sub) that came out of the verified JWT */
+const dbDeviceSeen=(env,sub,fp,ip)=>env.DB.prepare('INSERT INTO devices(sub,fp,first_seen,last_seen,ip,trusted) VALUES(?,?,?,?,?,1) ON CONFLICT(sub,fp) DO UPDATE SET last_seen=excluded.last_seen,ip=excluded.ip,trusted=1').bind(sub,fp,new Date().toISOString(),new Date().toISOString(),ip).run();
+const dbDevices=async(env,sub)=>(await env.DB.prepare('SELECT fp,first_seen,last_seen,ip,trusted FROM devices WHERE sub = ? ORDER BY last_seen DESC LIMIT 50').bind(sub).all()).results||[];
+const dbRevoke=(env,sub,fp)=>env.DB.prepare('DELETE FROM devices WHERE sub = ? AND fp = ?').bind(sub,fp).run();
+const dbInstUpsert=(env,sub,name,itype,country)=>env.DB.prepare('INSERT OR IGNORE INTO institutions(sub,name,itype,country,created_at) VALUES(?,?,?,?,?)').bind(sub,String(name||'').slice(0,120),String(itype||'').slice(0,40),String(country||'').slice(0,80),new Date().toISOString()).run();
+const dbInst=async(env,sub)=>env.DB.prepare('SELECT sub,name,itype,country FROM institutions WHERE sub = ?').bind(sub).first();
 
 async function tg(env,text){if(!env.TG_TOKEN||!env.TG_CHAT)return false;try{const r=await fetch(`https://api.telegram.org/bot${env.TG_TOKEN}/sendMessage`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({chat_id:env.TG_CHAT,text:text.slice(0,4000),parse_mode:'HTML',disable_web_page_preview:true})});return r.ok}catch{return false}}
 /* fixed-window rate limit: true when the limit is exceeded */
 async function hit(env,key,max,ttl){const k=key+':'+Math.floor(Date.now()/(ttl*1000)),n=(+(await env.KV.get(k))||0)+1;await env.KV.put(k,String(n),{expirationTtl:Math.max(60,ttl*2)});return n>max}
 /* counts n units against a daily budget: true when it would be exceeded */
 async function spend(env,key,n,max,ttl){const k=key+':'+Math.floor(Date.now()/(ttl*1000)),c=+(await env.KV.get(k))||0;if(c+n>max)return true;await env.KV.put(k,String(c+n),{expirationTtl:ttl*2});return false}
-async function alert(env,ip,kind,detail){await env.DB.prepare('INSERT INTO audit(kind,detail,ip,at) VALUES(?,?,?,?)').bind(kind,String(detail).slice(0,300),ip,new Date().toISOString()).run().catch(()=>{});return tg(env,`🚨 <b>${X(kind)}</b>\n${X(detail)}\nIP: ${X(ip)}`)}
+/* brute-force shield: more than 5 failures inside 10 seconds bans the IP for 15 minutes */
+async function fail(env,ip,why){if(await hit(env,'ff:'+ip,5,10)){await env.KV.put('ban:'+ip,'1',{expirationTtl:900});await dbAudit(env,'IP banned (brute force)',why,ip);await r2log(env,'IP banned (brute force)',why,ip)}}
+/* immutable audit trail in R2 (optional binding) */
+async function r2log(env,kind,detail,ip){if(!env.R2)return;try{const d=new Date();await env.R2.put(`audit/${d.toISOString().slice(0,10)}/${d.getTime()}-${rnd(4)}.json`,JSON.stringify({kind,detail:String(detail).slice(0,500),ip,at:d.toISOString(),v:APP_V}),{httpMetadata:{contentType:'application/json'}})}catch{}}
+async function alert(env,ip,kind,detail){await dbAudit(env,kind,detail,ip);await r2log(env,kind,detail,ip);return tg(env,`🚨 <b>${X(kind)}</b>\n${X(detail)}\nIP: ${X(ip)}`)}
 
 /* ───────────────────────── API (exactly what index.html calls) ───────────────────────── */
 async function oauthCallback(env,u){
@@ -53,7 +103,7 @@ async function oauthCallback(env,u){
 async function GOK(env,ip,sub,key,id){
  if(!sub||!/^[0-9a-f]{32,128}$/.test(key))return J({error:'unauthorized'},401);
  const kh=await sha(key),rec=JSON.parse(await env.KV.get('nk:'+sub)||'null');
- if(rec){if(!eq(rec.h,kh)){await alert(env,ip,'Portal key mismatch',`workspace ${sub}`);return J({error:'unauthorized'},403)}}
+ if(rec){if(!eq(rec.h,kh)){await fail(env,ip,'portal key '+sub);await alert(env,ip,'Portal key mismatch',`workspace ${sub}`);return J({error:'unauthorized'},403)}}
  else{if(await hit(env,'nkn:'+ip,3,86400))return J({error:'rate limited'},429);await env.KV.put('nk:'+sub,JSON.stringify({h:kh,id:String(id||'').slice(0,40),at:new Date().toISOString()}))}
  return null}
 /* what each role may receive. A student never gets fees, messages, CCTV, ratings, behaviour or attendance. */
@@ -63,11 +113,34 @@ function proj(d,who){
  else if(!(d.inst&&d.inst.cctv))d.cam='';
  return d}
 
+/* founder notification for a brand-new institution */
+function newInstMsg(b,ip,req){
+ const cf=req.cf||{},v=k=>X(String(b[k]??'-').slice(0,300)||'-');
+ return `🏛️ <b>NEW INSTITUTION REGISTERED</b>\n━━━━━━━━━━━━━━━━━━\n`+
+  `🏫 <b>${v('name')}</b> · ${v('itype')} · 👥 ${v('size')}\n🔗 ${v('url')}\n🆔 <code>${v('sub')}</code>\n\n`+
+  `🌍 <b>Country:</b> ${v('country')}\n📍 <b>Address:</b> ${v('address')}\n\n`+
+  `👤 <b>Founder / Principal:</b> ${v('founder')}\n✉️ ${v('email')}\n📱 ${v('phone')}\n\n`+
+  `📅 <b>UTC:</b> ${v('utc')}\n🌐 <b>IP:</b> ${X(ip)}${cf.country?' · '+X(cf.country):''}${cf.asn?' · AS'+X(cf.asn):''}\n`+
+  `🖥️ <b>Device:</b> <code>${v('fp')}</code>\n🧭 ${v('ua')}\n`+
+  ((cf.botManagement&&cf.botManagement.ja3Hash)?`🔐 <b>TLS JA3:</b> <code>${X(cf.botManagement.ja3Hash)}</code>\n`:'')+
+  `━━━━━━━━━━━━━━━━━━\n✅ ClasSphera v${X(b.v||APP_V)}`}
+
+/* OTP delivery: e-mail (Resend) first, SMS (Twilio) as the alternative */
+async function sendOtp(env,mail,phone,code){
+ if(env.MAIL_KEY&&env.MAIL_FROM&&MAILRX.test(mail)){
+  try{const r=await fetch('https://api.resend.com/emails',{method:'POST',headers:{authorization:'Bearer '+env.MAIL_KEY,'content-type':'application/json'},body:JSON.stringify({from:env.MAIL_FROM,to:[mail],subject:'Your ClasSphera verification code',html:`<div style="font-family:Inter,Arial,sans-serif;background:#070812;color:#e6e9f5;padding:28px;border-radius:16px;max-width:420px"><h2 style="margin:0 0 8px">ClasSphera 🔐</h2><p style="color:#9aa1b9">Your 6-digit verification code:</p><p style="font-size:34px;font-weight:800;letter-spacing:10px;color:#34d399;margin:14px 0">${code}</p><p style="color:#9aa1b9;font-size:12px">Valid for 5 minutes. If this was not you, ignore this message and tell your Principal.</p></div>`,text:`ClasSphera code: ${code} (valid 5 minutes)`})});if(r.ok)return 'mail'}catch{}
+ }
+ if(env.TWILIO_SID&&env.TWILIO_TOKEN&&env.TWILIO_FROM&&/^\+\d{7,15}$/.test(phone)){
+  try{const r=await fetch(`https://api.twilio.com/2010-04-01/Accounts/${env.TWILIO_SID}/Messages.json`,{method:'POST',headers:{authorization:'Basic '+btoa(env.TWILIO_SID+':'+env.TWILIO_TOKEN)},body:new URLSearchParams({To:phone,From:env.TWILIO_FROM,Body:`ClasSphera code: ${code}. Valid 5 minutes.`})});if(r.ok)return 'sms'}catch{}
+ }
+ return null}
+
 async function api(req,env,u,ip){
  try{
   const o=req.headers.get('origin');let foreign=false;
   if(o){try{foreign=new URL(o).host!==u.host}catch{foreign=true}}
   if(foreign)return J({error:'forbidden'},403);
+  if(await env.KV.get('ban:'+ip))return J({error:'Temporarily blocked. Try again in 15 minutes.'},429);
   if(await hit(env,'rl:'+ip,120,60))return J({error:'Too many requests'},429);
   const p=u.pathname;
   if(req.method==='GET'&&p==='/api/oauth/google/start'){ /* index.html: fetch('/api/oauth/google/start') → {url} */
@@ -75,25 +148,34 @@ async function api(req,env,u,ip){
    const st=rnd(16);await env.KV.put('os:'+st,'1',{expirationTtl:600});
    return J({url:'https://accounts.google.com/o/oauth2/v2/auth?'+new URLSearchParams({client_id:env.GOOGLE_CLIENT_ID,redirect_uri:u.origin+'/api/oauth/google/callback',response_type:'code',scope:'openid email profile',state:st,prompt:'select_account'})})}
   if(req.method==='GET'&&p==='/api/oauth/google/callback')return oauthCallback(env,u); /* → /#oauth:<code> */
+  if(req.method==='GET'&&p==='/api/version')return J({app:APP_V,schema:SCHEMA[SCHEMA.length-1][0]});
   if(req.method!=='POST')return J({error:'not found'},404);
   const raw=await req.text();if(raw.length>(p==='/api/g/sync'?12e6:262144))return J({error:'too large'},413);
   let b={};try{b=JSON.parse(raw||'{}')}catch{}if(!b||typeof b!=='object'||Array.isArray(b))b={};
   const ws=s=>String(s||'').toLowerCase().replace(/[^a-z0-9-]/g,'').slice(0,60);
+  await migrate(env);
   switch(p){
-   case '/api/telegram':{ /* threat telemetry (THREAT: …), FEEDBACK, NEW_INSTITUTION → founder */
+   case '/api/telegram':{ /* threat telemetry (THREAT: …), FEEDBACK, UNKNOWN_DEVICE, NEW_INSTITUTION → founder */
     if(await hit(env,'tg:'+ip,40,3600))return J({error:'rate limited'},429);
     let type=String(b.type||'EVENT').slice(0,60);
     /* index.html sends {type:'NEW_INSTITUTION',…,type:<school|madrasah…>} so the institution type overwrites the event name; restore it */
-    if(!/^(THREAT|FEEDBACK|NEW_INSTITUTION)/.test(type)&&b.name!=null&&b.size!=null){b.itype=type;type='NEW_INSTITUTION'}
-    const f=['institution','institutionId','subdomain','role','name','itype','size','topic','message','detail','at','lang','tz','screen','webdriver','online','ua'];
-    const icon=type.startsWith('THREAT')?'🚨':type==='FEEDBACK'?'📨':'🏫';
+    if(!/^(THREAT|FEEDBACK|NEW_INSTITUTION|UNKNOWN_DEVICE)/.test(type)&&b.name!=null&&b.size!=null){b.itype=type;type='NEW_INSTITUTION'}
+    if(type==='NEW_INSTITUTION'){
+     const sub=ws(b.sub);
+     if(b.sub&&(!SUBRX.test(sub)||RESERVED.includes(sub)||sub!==String(b.sub)))return J({error:'invalid subdomain'},400);
+     if(b.email&&!MAILRX.test(String(b.email)))return J({error:'invalid email'},400);
+     if(sub)await dbInstUpsert(env,sub,b.name,b.itype,b.country).catch(()=>{});
+     await r2log(env,'NEW_INSTITUTION',`${sub} · ${b.name} · ${b.country}`,ip);
+     return await tg(env,newInstMsg(b,ip,req))?J({ok:true}):J({error:'telegram unavailable'},502)}
+    const f=['institution','institutionId','subdomain','sub','mail','role','name','itype','size','topic','message','detail','note','fp','at','lang','tz','screen','webdriver','online','ua'];
+    const icon=type.startsWith('THREAT')?'🚨':type==='FEEDBACK'?'📨':type==='UNKNOWN_DEVICE'?'📵':'🏫';
     const body=f.filter(k=>b[k]!==undefined&&b[k]!==null&&b[k]!=='').map(k=>`<b>${k==='itype'?'type':k}</b>: ${X(String(b[k]).slice(0,500))}`).join('\n');
-    if(type.startsWith('THREAT'))await env.DB.prepare('INSERT INTO audit(kind,detail,ip,at) VALUES(?,?,?,?)').bind(type,String(b.detail||'').slice(0,300),ip,new Date().toISOString()).run().catch(()=>{});
-    return await tg(env,`${icon} <b>${X(type)}</b>\nIP: ${X(ip)}\n${body}`)?J({ok:true}):J({error:'telegram unavailable'},502)}
+    if(type.startsWith('THREAT')||type==='UNKNOWN_DEVICE'){await dbAudit(env,type,String(b.detail||b.note||b.sub||'').slice(0,300),ip);await r2log(env,type,String(b.detail||b.note||b.sub||''),ip)}
+    return await tg(env,`${icon} <b>${X(type)}</b>\nIP: ${X(ip)}${req.cf&&req.cf.country?' · '+X(req.cf.country):''}\n${body}`)?J({ok:true}):J({error:'telegram unavailable'},502)}
    case '/api/master-override':{ /* {key,sub} → {temp} */
     const sub=ws(b.sub);
     if(await hit(env,'mo:'+ip,3,3600)){await alert(env,ip,'Master key flood',`workspace ${sub}`);return J({error:'locked'},429)}
-    if(!env.MASTER_KEY||!eq(b.key||'',env.MASTER_KEY)){await alert(env,ip,'Master key attempt',`workspace ${sub}`);return J({error:'rejected'},403)}
+    if(!env.MASTER_KEY||!eq(b.key||'',env.MASTER_KEY)){await fail(env,ip,'master key '+sub);await alert(env,ip,'Master key attempt',`workspace ${sub}`);return J({error:'rejected'},403)}
     await alert(env,ip,'Master override used',`workspace ${sub}`);return J({temp:rnd(6)})}
    case '/api/oauth/claim':{ /* {code} → {email,name} */
     const k='oc:'+String(b.code||'').slice(0,40),v=await env.KV.get(k);if(!v)return J({error:'expired'},410);
@@ -104,6 +186,45 @@ async function api(req,env,u,ip){
      const id='M-'+[...crypto.getRandomValues(new Uint8Array(8))].map(x=>AL[x%32]).join('');
      if(!(await env.KV.get('id:'+id))){await env.KV.put('id:'+id,'1');return J({id})}}
     return J({error:'retry'},503)}
+   case '/api/subdomain/check':{ /* {sub} → {valid,available} · lets the sign-up form check a name against the central registry */
+    if(await hit(env,'sdc:'+ip,60,600))return J({error:'rate limited'},429);
+    const sub=String(b.sub||'');if(sub!==sub.toLowerCase()||!SUBRX.test(sub)||RESERVED.includes(sub))return J({valid:false,available:false});
+    return J({valid:true,available:!(await dbInst(env,sub))})}
+   case '/api/otp/send':{ /* {sub,mail,phone,fp,known} → {ok}: 6-digit code, stored only as a salted hash for 5 minutes */
+    const sub=ws(b.sub),mail=String(b.mail||'').trim().toLowerCase().slice(0,120),phone=String(b.phone||'').replace(/[^\d+]/g,'').slice(0,20),fp=String(b.fp||'');
+    if(!SUBRX.test(sub)||!/^[0-9a-f]{64}$/.test(fp)||(!MAILRX.test(mail)&&!/^\+\d{7,15}$/.test(phone)))return J({error:'invalid request'},400);
+    const canMail=!!(env.MAIL_KEY&&env.MAIL_FROM&&MAILRX.test(mail)),canSms=!!(env.TWILIO_SID&&env.TWILIO_TOKEN&&env.TWILIO_FROM&&/^\+\d{7,15}$/.test(phone));
+    if(!canMail&&!canSms)return J({error:'OTP delivery not configured'},503);
+    if(await hit(env,'otp:'+ip,6,600)||await hit(env,'otps:'+sub+':'+(mail||phone),5,900))return J({error:'Too many codes requested. Wait a few minutes.'},429);
+    if(await spend(env,'otpg',1,+env.OTP_DAILY_CAP||2000,86400))return J({error:'daily limit'},429);
+    const code=String(crypto.getRandomValues(new Uint32Array(1))[0]%1000000).padStart(6,'0'),k='otp:'+sub+':'+fp;
+    await env.KV.put(k,JSON.stringify({h:await sha(`${code}:${sub}:${fp}:${env.MASTER_KEY||''}`),n:0,known:!!b.known}),{expirationTtl:300});
+    const via=await sendOtp(env,mail,phone,code);
+    if(!via){await env.KV.delete(k);return J({error:'delivery failed'},502)}
+    await dbAudit(env,'OTP sent',`${sub} via ${via}${b.known?'':' · UNKNOWN DEVICE'}`,ip);
+    return J({ok:true,via})}
+   case '/api/otp/verify':{ /* {sub,fp,code} → {ok,token}: token is a HS256 JWT bound to the institution and the device */
+    const sub=ws(b.sub),fp=String(b.fp||''),code=String(b.code||'');
+    if(!SUBRX.test(sub)||!/^[0-9a-f]{64}$/.test(fp)||!/^\d{6}$/.test(code))return J({error:'invalid request'},400);
+    const k='otp:'+sub+':'+fp,rec=JSON.parse(await env.KV.get(k)||'null');
+    if(!rec)return J({error:'Code expired. Sign in again.'},410);
+    if(rec.n>=3){await env.KV.delete(k);return J({error:'Too many wrong codes.'},429)}
+    if(!eq(await sha(`${code}:${sub}:${fp}:${env.MASTER_KEY||''}`),rec.h)){rec.n++;await env.KV.put(k,JSON.stringify(rec),{expirationTtl:300});await fail(env,ip,'otp '+sub);await dbAudit(env,'OTP mismatch',sub,ip);return J({error:'Incorrect code.'},401)}
+    await env.KV.delete(k);
+    await dbDeviceSeen(env,sub,fp,ip).catch(()=>{});
+    const now=Math.floor(Date.now()/1000),token=await signJWT(env,{sub,fp,iat:now,exp:now+28800,v:APP_V});
+    await r2log(env,'OTP verified',`${sub} · device ${fp.slice(0,12)}`,ip);
+    return J({ok:true,token})}
+   case '/api/session/check':{ /* {token} → {ok,sub,exp} */
+    const c=await verifyJWT(env,b.token);if(!c)return J({error:'invalid session'},401);return J({ok:true,sub:c.sub,exp:c.exp})}
+   case '/api/devices/list':{ /* {token} → trusted devices of THIS institution only */
+    const c=await verifyJWT(env,b.token);if(!c)return J({error:'invalid session'},401);
+    return J({devices:(await dbDevices(env,c.sub)).map(d=>({...d,fp:d.fp.slice(0,16)}))})}
+   case '/api/devices/revoke':{ /* {token,fp} → forget one device (first 16 hex chars are enough) */
+    const c=await verifyJWT(env,b.token);if(!c)return J({error:'invalid session'},401);
+    const pre=String(b.fp||'').slice(0,16);if(!/^[0-9a-f]{16}$/.test(pre))return J({error:'invalid device'},400);
+    const d=(await dbDevices(env,c.sub)).find(x=>x.fp.startsWith(pre));if(!d)return J({error:'not found'},404);
+    await dbRevoke(env,c.sub,d.fp);await dbAudit(env,'Device revoked',`${c.sub} ${pre}`,ip);return J({ok:true})}
    case '/api/checkout':{ /* {gateway,item,usd,txid,sub,institutionId} → {status,url,message} */
     const cur=/^[A-Z]{3}$/.test(String(b.cur||''))?b.cur:'USD',usd=Math.round(+b.usd*100)/100,item=(String(b.item||'').slice(0,100)+(cur==='USD'?'':' ['+cur+']')).trim();
     if(!GATES.includes(b.gateway)||!(usd>0&&usd<=(cur==='USD'?5000:5e6))||!item)return J({error:'invalid payment'},400);
@@ -120,7 +241,7 @@ async function api(req,env,u,ip){
     if(await hit(env,'sms:'+ip,10,3600))return J({error:'rate limited'},429);
     /* per-workspace secret: the first call registers its hash, every later call must present the same key */
     const kh=await sha(key),rec=JSON.parse(await env.KV.get('nk:'+sub)||'null');
-    if(rec){if(!eq(rec.h,kh)){await alert(env,ip,'SMS key mismatch',`workspace ${sub}`);return J({error:'unauthorized'},403)}}
+    if(rec){if(!eq(rec.h,kh)){await fail(env,ip,'sms key '+sub);await alert(env,ip,'SMS key mismatch',`workspace ${sub}`);return J({error:'unauthorized'},403)}}
     else{if(await hit(env,'nkn:'+ip,3,86400))return J({error:'rate limited'},429);await env.KV.put('nk:'+sub,JSON.stringify({h:kh,id:String(b.id||'').slice(0,40),at:new Date().toISOString()}))}
     const nm=v=>String(v||'').replace(/[^\p{L}\p{M}\p{N} ,'’()&-]/gu,'').replace(/\s+/g,' ').trim(); /* no links, no symbols */
     const m=[];
@@ -150,7 +271,7 @@ async function api(req,env,u,ip){
     const db=JSON.parse(await env.KV.get('gs:'+sub)||'null'),s=db&&db.s&&db.s[sid];
     const salt=s?(who==='student'?s.ss:s.gs):'0'.repeat(16),want=s?(who==='student'?s.sh:s.gh):'0'.repeat(64);
     const okPin=eq(await sha(pin+':'+salt),want)&&!!s&&/^[0-9a-f]{64}$/.test(want)&&want!=='0'.repeat(64),okPh=who==='student'||(!!s&&s.ph.length>=7&&String(b.phone||'').replace(/\D/g,'').slice(-10)===s.ph);
-    if(!(okPin&&okPh)){await env.KV.put(fk,String(fails+1),{expirationTtl:900});return J({error:'Details did not match. Check the ID, mobile number and PIN.'},401)}
+    if(!(okPin&&okPh)){await env.KV.put(fk,String(fails+1),{expirationTtl:900});await fail(env,ip,'guardian login '+sub);return J({error:'Details did not match. Check the ID, mobile number and PIN.'},401)}
     await env.KV.delete(fk);
     const token=rnd(24);await env.KV.put('gt:'+token,JSON.stringify({sub,sid,who}),{expirationTtl:43200});
     return J({token,who,d:proj(s.d,who)})}
@@ -242,32 +363,51 @@ const htmlHeaders=(main,more={})=>({'content-type':'text/html; charset=utf-8','c
 const file=(body,type,main,ttl=3600)=>new Response(body,{headers:{'content-type':type+'; charset=utf-8','cache-control':'public, max-age='+ttl,'x-content-type-options':'nosniff',...(main?{}:{'x-robots-tag':'noindex, nofollow'})}});
 const notFound=()=>new Response('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>Page not found | ClasSphera</title><style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#070812;color:#e6e9f5;font-family:Inter,system-ui,sans-serif;text-align:center;padding:1rem}a{color:#34d399}</style></head><body><main><h1>Page not found</h1><p><a href="/">Back to ClasSphera</a></p></main></body></html>',{status:404,headers:htmlHeaders(false,{'cache-control':'no-store'})});
 
-async function page(req,env,u,main,p){
+/* single-label subdomain of a root domain → institution id, otherwise null */
+function tenantSub(host){
+ for(const r of ROOTS){if(host.endsWith('.'+r)){const s=host.slice(0,-(r.length+1));if(SUBRX.test(s)&&!RESERVED.includes(s))return s}}
+ return null}
+
+async function page(req,env,u,main,p,o){
+ o=o||{};
  const base=await env.ASSETS.fetch(new Request(u.origin+'/'));
  if(!base.ok)return base;
- const url=SITE+p.path,set=(a,v)=>({element(e){e.setAttribute(a,v)}});
+ const url=o.sub?`https://${o.host}/`:SITE+p.path,set=(a,v)=>({element(e){e.setAttribute(a,v)}});
+ const T=o.sub?{title:o.title,desc:o.desc}:p;
  let rw=new HTMLRewriter();
- if(p.v!=='home'){
-  rw=rw.on('title',{element(e){e.setInnerContent(p.title)}})
-   .on('meta[name="description"]',set('content',p.desc))
-   .on('meta[property="og:title"]',set('content',p.title))
-   .on('meta[property="og:description"]',set('content',p.desc))
-   .on('meta[name="twitter:title"]',set('content',p.title))
-   .on('meta[name="twitter:description"]',set('content',p.desc));
+ if(p.v!=='home'||o.sub){
+  rw=rw.on('title',{element(e){e.setInnerContent(T.title)}})
+   .on('meta[name="description"]',set('content',T.desc))
+   .on('meta[property="og:title"]',set('content',T.title))
+   .on('meta[property="og:description"]',set('content',T.desc))
+   .on('meta[name="twitter:title"]',set('content',T.title))
+   .on('meta[name="twitter:description"]',set('content',T.desc));
  }
  rw=rw.on('link[rel="canonical"]',set('href',url)).on('meta[property="og:url"]',set('content',url))
   .on('script[type="application/ld+json"]',{element(e){e.remove()}}); /* replaced below by one graph built from SITE */
  if(!main)rw=rw.on('meta[name="robots"]',set('content','noindex,nofollow'));
- rw=rw.on('head',{element(e){e.append('<link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="manifest" href="/manifest.webmanifest">'+LD(p)+BOOT(p.v),{html:true})}})
+ /* institution portal: index.html reads ?sub= and opens that institution's Secure Login instead of the sign-up wizard */
+ const tenantJs=o.sub?`<script>try{history.replaceState(null,'',location.pathname+'?sub=${o.sub}'+location.hash)}catch(e){}</script>`:'';
+ rw=rw.on('head',{element(e){e.append('<link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="manifest" href="/manifest.webmanifest"><meta name="cs-app-version" content="'+APP_V+'">'+(o.sub?'':LD(p))+BOOT(p.v)+tenantJs,{html:true})}})
   .on('main#app',{element(e){e.setInnerContent(p.body(),{html:true})}}) /* the app replaces this with its own render() */
   .on('footer#foot',{element(e){e.after(NAV,{html:true})}});
  const out=rw.transform(base);
  return new Response(out.body,{status:200,headers:htmlHeaders(main)});
 }
 
-async function site(req,env,u,host,main){
+async function site(req,env,u,host,main,tenant){
  const path=u.pathname;
  if(req.method!=='GET'&&req.method!=='HEAD')return new Response('Method not allowed',{status:405,headers:{allow:'GET, HEAD'}});
+ if(tenant){
+  if(path==='/robots.txt')return file(`User-agent: *\nAllow: /\nDisallow: /api/\n\nSitemap: https://${host}/sitemap.xml\n`,'text/plain',true);
+  if(path==='/sitemap.xml')return file(`<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n<url><loc>https://${host}/</loc><lastmod>${LASTMOD}</lastmod><changefreq>monthly</changefreq><priority>1.0</priority></url>\n</urlset>\n`,'application/xml',true);
+  if(path==='/'||path==='/index.html'){
+   let name='';try{await migrate(env);const r=await dbInst(env,tenant);if(r&&r.name)name=String(r.name)}catch{}
+   const label=name||tenant;
+   return page(req,env,u,true,BYPATH['/'],{sub:tenant,host,title:`${label} | Secure Login · ClasSphera`,desc:`Secure sign-in for ${label}. Student records, attendance, marksheets and fees on ClasSphera by QVMPXT.`});
+  }
+  if(BYPATH[path]||ALIAS[path])return Response.redirect(SITE+(ALIAS[path]||path),301);
+ }
  if(path==='/robots.txt')return file(main?ROBOTS:'User-agent: *\nDisallow: /\n','text/plain',main);
  if(path==='/sitemap.xml')return main?file(SITEMAP(),'application/xml',main):notFound();
  if(path==='/manifest.webmanifest')return file(MANIFEST,'application/manifest+json',main,86400);
@@ -290,8 +430,8 @@ async function site(req,env,u,host,main){
 }
 
 export default{async fetch(req,env){
- const u=new URL(req.url),host=u.hostname.toLowerCase(),ip=req.headers.get('cf-connecting-ip')||'unknown',main=host===APEX;
+ const u=new URL(req.url),host=u.hostname.toLowerCase(),ip=req.headers.get('cf-connecting-ip')||'unknown',tenant=tenantSub(host),main=host===APEX||!!tenant;
  if(u.protocol==='http:'&&main)return Response.redirect('https://'+u.host+u.pathname+u.search,301);
  if(u.pathname.startsWith('/api/'))return api(req,env,u,ip);
- try{return await site(req,env,u,host,main)}catch(e){return new Response('Server error',{status:500,headers:{'cache-control':'no-store','x-robots-tag':'noindex'}})}
+ try{return await site(req,env,u,host,main,tenant)}catch(e){return new Response('Server error',{status:500,headers:{'cache-control':'no-store','x-robots-tag':'noindex'}})}
 }};
