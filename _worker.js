@@ -60,6 +60,23 @@ async function spend(env,key,n,max,ttl){const k=key+':'+Math.floor(Date.now()/(t
 
 /* ───────────── secrets, JWT, AES ───────────── */
 const secret=env=>{const s=env.JWT_SECRET||env.MASTER_KEY;if(!s||String(s).length<16)throw new Err(503,'Server is not configured: set MASTER_KEY (16+ characters) or JWT_SECRET.');return String(s)};
+/* ── diagnostics: readable reasons instead of a bare "server error" ── */
+function needBindings(env){const m=[];
+ if(!env||!env.DB||typeof env.DB.prepare!=='function')m.push('DB (D1 database)');
+ if(!env||!env.KV||typeof env.KV.get!=='function')m.push('KV (KV namespace)');
+ if(m.length){console.error('[ClasSphera] Missing Cloudflare binding(s): '+m.join(', '));throw new Err(503,'Missing Cloudflare binding: '+m.join(' and ')+'. Add it in Cloudflare → Pages/Worker → Settings → Bindings (the variable name must match exactly), then redeploy.',{code:'missing_binding'})}}
+function whyOf(e){
+ const m=String(e&&e.message||e||'unknown error').replace(/\s+/g,' ').trim().slice(0,300);
+ if(/KV .*(limit|quota)|limit exceeded|too many requests/i.test(m)&&/KV|put\(\)|get\(\)/i.test(m))return'Cloudflare KV limit reached: '+m;
+ if(/no such table|D1_ERROR|SQLITE|database/i.test(m))return'Database error: '+m;
+ if(/Cannot read prop.*(prepare|get|put|batch)|is not a function|undefined/i.test(m)&&/DB|KV|prepare|batch|\.get|\.put/i.test(m))return'A Cloudflare binding (DB or KV) is missing or misnamed: '+m;
+ return m}
+/* Google credentials: trimmed, surrounding quotes removed, missing names listed */
+const envStr=v=>{let x=String(v==null?'':v).trim();if(/^(["']).*\1$/.test(x))x=x.slice(1,-1).trim();return x};
+function gcfg(env){const id=envStr(env&&env.GOOGLE_CLIENT_ID),sec=envStr(env&&env.GOOGLE_CLIENT_SECRET),missing=[];
+ if(!id)missing.push('GOOGLE_CLIENT_ID');if(!sec)missing.push('GOOGLE_CLIENT_SECRET');
+ if(id&&!/^[\w.-]+\.apps\.googleusercontent\.com$/i.test(id))console.warn('[ClasSphera] GOOGLE_CLIENT_ID does not look like a Google Web Client ID (<number>-<hash>.apps.googleusercontent.com).');
+ return{id,sec,missing,ok:!missing.length}}
 const HK=new Map();
 async function hkey(env){const s=secret(env);let k=HK.get(s);if(!k){k=await crypto.subtle.importKey('raw',u8(s),{name:'HMAC',hash:'SHA-256'},false,['sign']);HK.set(s,k)}return k}
 const hmac=async(env,m)=>hex(await crypto.subtle.sign('HMAC',await hkey(env),u8(m)));
@@ -190,7 +207,7 @@ async function commitParts(env,sub,o){
   st.push(sq(env,UPSERT,sub,k,rev,big,0,s.length,big?null:s,at))}
  for(const k of o.del){const old=cur.get(k),rev=(old?old.rev:0)+1;nr[k]=rev;if(old&&old.big)st.push(sq(env,'DELETE FROM ws_chunks WHERE sub=? AND k=?',sub,k));st.push(sq(env,UPSERT,sub,k,rev,0,1,0,null,at))}
  st.push(sq(env,'UPDATE ws_meta SET updated=? WHERE sub=?',at,sub));
- try{await env.DB.batch(st)}catch(e){if(/CHECK|constraint/i.test(String(e&&e.message)))return{conflict:keys};throw e}
+ try{await env.DB.batch(st)}catch(e){if(/CHECK constraint failed/i.test(String(e&&e.message)))return{conflict:keys};throw e}
  return{ok:true,revs:nr}}
 async function mutatePart(env,sub,k,fn){
  for(let i=0;i<4;i++){const m=await readParts(env,sub,[k]),x=m.get(k);let v;if(x&&!x.deleted&&x.raw){try{v=JSON.parse(x.raw)}catch{}}
@@ -266,6 +283,7 @@ async function idNew(C){
  throw new Err(503,'retry')}
 async function wsCreate(C){
  const{b,env,ip}=C,sub=String(b.sub||'');
+ secret(env); /* fail BEFORE anything is written: a missing MASTER_KEY used to leave a half-created, 'taken' workspace */
  if(sub!==sub.toLowerCase()||!SUBRX.test(sub)||RESERVED.includes(sub))throw new Err(400,'Invalid subdomain');
  if(hitMem('wc:'+ip,8,3600000)||await hit(env,'wc:'+ip,6,3600))throw new Err(429,'Too many workspaces created from this network. Try again later.');
  const w=b.ws;if(!isO(w))throw new Err(400,'Workspace data is missing');
@@ -278,15 +296,19 @@ async function wsCreate(C){
  if(isO(w.plan))w.plan={name:str(w.plan.name,60),gateway:str(w.plan.gateway,30),status:'pending'};else delete w.plan;
  const ex=await dbInst(env,sub);let made=false;
  if(ex){const claimed=await sq(env,'SELECT 1 AS x FROM ws_meta WHERE sub=?',sub).first();if(claimed||b.migrate!==true)throw new Err(409,'taken')}
- else{try{await sq(env,'INSERT INTO institutions(sub,name,itype,country,created_at) VALUES(?,?,?,?,?)',sub,str(w.inst.name,120),str(w.inst.type,40),str((w.inst.addr||{}).k,80),iso()).run();made=true}catch{throw new Err(409,'taken')}}
+ else{try{await sq(env,'INSERT INTO institutions(sub,name,itype,country,created_at) VALUES(?,?,?,?,?)',sub,str(w.inst.name,120),str(w.inst.type,40),str((w.inst.addr||{}).k,80),iso()).run();made=true}catch(e){if(/UNIQUE|PRIMARY KEY|constraint/i.test(String(e&&e.message)))throw new Err(409,'taken');throw e}}
  const parts={};for(const k of keys){const t=JSON.stringify(w[k]===undefined?null:w[k]);if(t.length>PART_MAX){if(made)await sq(env,'DELETE FROM institutions WHERE sub=?',sub).run().catch(()=>{});throw new Err(413,`Section ${k} is too large`)}parts[k]=t}
  await sq(env,'INSERT OR REPLACE INTO ws_meta(sub,dschema,created,updated) VALUES(?,?,?,?)',sub,DATA_SCHEMA,iso(),iso()).run();
  let r;try{r=await commitParts(env,sub,{parts,del:[],revs:{}})}catch(e){if(made)await sq(env,'DELETE FROM institutions WHERE sub=?',sub).run().catch(()=>{});await sq(env,'DELETE FROM ws_meta WHERE sub=?',sub).run().catch(()=>{});throw e}
  if(r.conflict){if(made)await sq(env,'DELETE FROM institutions WHERE sub=?',sub).run().catch(()=>{});throw new Err(409,'taken')}
- await env.DB.batch(idxStmts(env,sub,w.users));
- if(FPRX.test(fp))await trustDevice(env,sub,adm.email,fp,ip);
- await r2log(env,'WORKSPACE_CREATED',sub+' · '+str(w.inst.name,80),ip);
- const t=await issue(C,{sub,ph:adm.email,role:'Admin'},fp);return sessResp(t,{revs:r.revs})}
+ try{
+  await env.DB.batch(idxStmts(env,sub,w.users));
+  if(FPRX.test(fp))await trustDevice(env,sub,adm.email,fp,ip);
+  await r2log(env,'WORKSPACE_CREATED',sub+' · '+str(w.inst.name,80),ip);
+  const t=await issue(C,{sub,ph:adm.email,role:'Admin'},fp);return sessResp(t,{revs:r.revs})
+ }catch(e){await wsRollback(env,sub,made);throw e}}
+/* undo a half-created workspace so the person can simply try again (never leaves a 'taken' ghost) */
+async function wsRollback(env,sub,made){try{await env.DB.batch(['ws_chunks','ws_parts','ws_index','trusted','devices','ws_meta'].map(t=>sq(env,`DELETE FROM ${t} WHERE sub=?`,sub)).concat(made?[sq(env,'DELETE FROM institutions WHERE sub=?',sub)]:[]))}catch(e){console.error('[ClasSphera] rollback failed for '+sub+': '+(e&&e.message))}}
 async function wsFind(C){
  const{b,env,ip}=C;if(hitMem('wf:'+ip,20,600000)||await hit(env,'wf:'+ip,20,600))throw new Err(429,'rate limited');
  const m=str(b.email,120).toLowerCase();if(!MAILRX.test(m))throw new Err(400,'invalid email');
@@ -732,14 +754,20 @@ async function fRestore(C){
 
 /* ───────────── OAuth (Google redirect flow) ───────────── */
 async function oauthCallback(env,u){
- const back=()=>Response.redirect(u.origin+'/#home',302);
- try{const st=u.searchParams.get('state')||'',code=u.searchParams.get('code');
-  if(!code||!st||!env.GOOGLE_CLIENT_ID||!(await env.KV.get('os:'+st)))return back();await env.KV.delete('os:'+st);
-  const t=await(await fetch('https://oauth2.googleapis.com/token',{method:'POST',body:new URLSearchParams({code,client_id:env.GOOGLE_CLIENT_ID,client_secret:env.GOOGLE_CLIENT_SECRET,redirect_uri:u.origin+'/api/oauth/google/callback',grant_type:'authorization_code'})})).json();
-  if(!t.access_token)return back();
-  const p=await(await fetch('https://openidconnect.googleapis.com/v1/userinfo',{headers:{authorization:'Bearer '+t.access_token}})).json();
-  if(!p.email||p.email_verified!==true)return back();
-  const c=rnd(16);await env.KV.put('oc:'+c,JSON.stringify({email:p.email,name:p.name||''}),{expirationTtl:300});return Response.redirect(u.origin+'/#oauth:'+c,302)}catch{return back()}}
+ const bad=c=>{c=String(c||'failed').replace(/[^\w-]/g,'').slice(0,48)||'failed';console.warn('[ClasSphera] Google sign-in failed: '+c);return Response.redirect(u.origin+'/#oauth_error:'+c,302)};
+ try{const g=gcfg(env);if(!g.ok){console.warn('[ClasSphera] Google sign-in is not configured. Missing: '+g.missing.join(', '));return bad('not_configured')}
+  const st=u.searchParams.get('state')||'',code=u.searchParams.get('code')||'',ge=u.searchParams.get('error');
+  const okState=st?!!(await env.KV.get('os:'+st)):false;if(st)await env.KV.delete('os:'+st);
+  if(ge)return bad(ge==='access_denied'?'access_denied':'google_'+ge);
+  if(!okState)return bad('state_expired');
+  if(!code)return bad('no_code');
+  const tr=await fetch('https://oauth2.googleapis.com/token',{method:'POST',body:new URLSearchParams({code,client_id:g.id,client_secret:g.sec,redirect_uri:u.origin+'/api/oauth/google/callback',grant_type:'authorization_code'})}),t=await tr.json().catch(()=>({}));
+  if(!t.access_token){console.warn('[ClasSphera] Google token exchange said: '+(t.error||tr.status)+' '+(t.error_description||''));return bad('token_'+(t.error||('http_'+tr.status)))}
+  const pr=await fetch('https://openidconnect.googleapis.com/v1/userinfo',{headers:{authorization:'Bearer '+t.access_token}}),p=await pr.json().catch(()=>({}));
+  if(!p.email)return bad('profile');
+  if(p.email_verified!==true)return bad('email_not_verified');
+  const c=rnd(16);await env.KV.put('oc:'+c,JSON.stringify({email:p.email,name:p.name||''}),{expirationTtl:300});return Response.redirect(u.origin+'/#oauth:'+c,302)}
+ catch(e){console.error('[ClasSphera] Google callback exception: '+(e&&e.message));return bad('failed')}}
 async function oauthClaim(C){const k='oc:'+String(C.b.code||'').slice(0,40),v=await C.env.KV.get(k);if(!v)throw new Err(410,'expired');await C.env.KV.delete(k);return JR(v)}
 async function health(C){
  const t0=Date.now(),o={ok:true,app:APP_V,schema:API_SCHEMA,dataSchema:DATA_SCHEMA,time:iso()};
@@ -769,6 +797,7 @@ const MUTATING=new Set(['/api/ws/save','/api/ws/create','/api/g/sync','/api/back
 async function api(req,env,ctx,u,ip,tenant){
  const t0=Date.now(),p=u.pathname,C={req,env,ctx,u,ip,tenant,path:p,host:u.hostname.toLowerCase(),b:{},raw:''};
  try{
+  needBindings(env);
   const o=req.headers.get('origin');let foreign=false;if(o){try{foreign=new URL(o).host!==u.host}catch{foreign=true}}
   if(foreign&&p!=='/api/stripe/webhook')return J({error:'forbidden'},403);
   if(await memo('ban:'+ip,15000,()=>env.KV.get('ban:'+ip)))return J({error:'Temporarily blocked. Try again in 15 minutes.'},429);
@@ -777,9 +806,10 @@ async function api(req,env,ctx,u,ip,tenant){
    if(p==='/api/health')return await health(C);
    if(p==='/api/version')return J({app:APP_V,schema:API_SCHEMA,dataSchema:DATA_SCHEMA,db:SCHEMA[SCHEMA.length-1][0]});
    if(p==='/api/oauth/google/start'){
-    if(!env.GOOGLE_CLIENT_ID||!env.GOOGLE_CLIENT_SECRET)return J({error:'not configured'},503);
+    const g=gcfg(env);
+    if(!g.ok){console.warn('[ClasSphera] Google sign-in is not configured. Missing Worker binding(s): '+g.missing.join(', '));return J({error:'Google sign-in is not configured on the server. Missing: '+g.missing.join(', ')+'.',missing:g.missing},503)}
     const st=rnd(16);await env.KV.put('os:'+st,'1',{expirationTtl:600});
-    return J({url:'https://accounts.google.com/o/oauth2/v2/auth?'+new URLSearchParams({client_id:env.GOOGLE_CLIENT_ID,redirect_uri:u.origin+'/api/oauth/google/callback',response_type:'code',scope:'openid email profile',state:st,prompt:'select_account'})})}
+    return J({url:'https://accounts.google.com/o/oauth2/v2/auth?'+new URLSearchParams({client_id:g.id,redirect_uri:u.origin+'/api/oauth/google/callback',response_type:'code',scope:'openid email profile',state:st,prompt:'select_account'})})}
    if(p==='/api/oauth/google/callback')return await oauthCallback(env,u);
    return J({error:'not found'},404)}
   if(req.method!=='POST')return J({error:'not found'},404);
@@ -798,6 +828,8 @@ async function api(req,env,ctx,u,ip,tenant){
  }catch(e){
   if(e instanceof Err)return J({error:e.message,...e.extra},e.status);
   bg(C,sysAlert(env,'WORKER_EXCEPTION',`${p}: ${String(e&&e.message).slice(0,200)}`,{key:p+String(e&&e.message).slice(0,60),ttl:900,ip}));
+  console.error('[ClasSphera] '+p+' failed: '+(e&&e.stack||e));
+  if(p==='/api/ws/create')return J({error:whyOf(e),code:'internal_error'},500); /* the real reason, so sign-up problems can be fixed from the screen */
   return J({error:'server error'},500)}}
 
 /* ───────────── SEO: pages, sitemap, robots, manifest, service worker, icons ───────────── */
@@ -856,7 +888,7 @@ const NAV=`<nav aria-label="ClasSphera pages" style="max-width:72rem;margin:0 au
 const ROBOTS=lm=>`User-agent: *\nAllow: /\nDisallow: /api/\n\nSitemap: ${SITE}/sitemap.xml\n`;
 const SITEMAP=env=>{const lm=(env&&env.SITE_LASTMOD)||LASTMOD;return`<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${PAGES.map(p=>`<url><loc>${SITE}${p.path==='/'?'/':p.path}</loc><lastmod>${lm}</lastmod><changefreq>${p.cf}</changefreq><priority>${p.pr}</priority></url>`).join('\n')}\n</urlset>\n`};
 const MANIFEST=JSON.stringify({name:'ClasSphera',short_name:'ClasSphera',description:`${BRAND}. ${TAG}`,id:'/',start_url:'/',scope:'/',display:'standalone',background_color:'#070812',theme_color:'#070812',lang:'en',dir:'auto',categories:['education','productivity'],icons:[{src:'/icon-192.png',sizes:'192x192',type:'image/png',purpose:'any'},{src:'/icon-512.png',sizes:'512x512',type:'image/png',purpose:'any'},{src:'/favicon.svg',sizes:'any',type:'image/svg+xml',purpose:'any'}],shortcuts:[{name:'Login',url:'/login'},{name:'Guardian sign in',url:'/guardian-signup'},{name:'Student sign in',url:'/student-signup'},{name:'Global Online Admission',url:'/admission'}]});
-const FAVICON='<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" fill="none"><defs><linearGradient id="a" gradientUnits="userSpaceOnUse" x1="8" y1="8" x2="92" y2="92"><stop stop-color="#a78bfa"/><stop offset=".5" stop-color="#22d3ee"/><stop offset="1" stop-color="#34d399"/></linearGradient><linearGradient id="b" gradientUnits="userSpaceOnUse" x1="56" y1="40" x2="82" y2="60"><stop stop-color="#fef08a"/><stop offset="1" stop-color="#f59e0b"/></linearGradient></defs><path d="M50 5l39 22.5v45L50 95 11 72.500v-45z" fill="#0b1030" stroke="url(#a)" stroke-width="4" stroke-linejoin="round"/><path d="M50 17l28 16.200v33.600L50 83 22 66.800V33.200z" stroke="url(#a)" stroke-opacity=".35" stroke-width="1.5" stroke-linejoin="round"/><path d="M63.500 36.500A21 21 0 1 0 63.500 63.500" stroke="url(#a)" stroke-width="9" stroke-linecap="round"/><path d="M60 50l9.500-10 9.500 10-9.500 10z" fill="url(#b)"/><ellipse cx="50" cy="50" rx="41" ry="12" transform="rotate(-32 50 50)" stroke="url(#a)" stroke-opacity=".55" stroke-width="1.8"/><circle cx="23" cy="73" r="3.200" fill="#f472b6"/></svg>';
+const FAVICON='<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" fill="none"><rect width="100" height="100" fill="#070812"/><defs><linearGradient id="a" gradientUnits="userSpaceOnUse" x1="8" y1="8" x2="92" y2="92"><stop stop-color="#a78bfa"/><stop offset=".5" stop-color="#22d3ee"/><stop offset="1" stop-color="#34d399"/></linearGradient><linearGradient id="b" gradientUnits="userSpaceOnUse" x1="56" y1="40" x2="82" y2="60"><stop stop-color="#fef08a"/><stop offset="1" stop-color="#f59e0b"/></linearGradient></defs><path d="M50 5l39 22.5v45L50 95 11 72.500v-45z" fill="#0b1030" stroke="url(#a)" stroke-width="4" stroke-linejoin="round"/><path d="M50 17l28 16.200v33.600L50 83 22 66.800V33.200z" stroke="url(#a)" stroke-opacity=".35" stroke-width="1.5" stroke-linejoin="round"/><path d="M63.500 36.500A21 21 0 1 0 63.500 63.500" stroke="url(#a)" stroke-width="9" stroke-linecap="round"/><path d="M60 50l9.500-10 9.500 10-9.500 10z" fill="url(#b)"/><ellipse cx="50" cy="50" rx="41" ry="12" transform="rotate(-32 50 50)" stroke="url(#a)" stroke-opacity=".55" stroke-width="1.8"/><circle cx="23" cy="73" r="3.200" fill="#f472b6"/></svg>';
 const SW=`/* ClasSphera service worker ${APP_V} */
 const V='cs-${APP_V}';
 self.addEventListener('install',e=>{e.waitUntil(caches.open(V).then(c=>c.add(new Request('/',{cache:'reload'}))).catch(()=>{}).then(()=>self.skipWaiting()))});
