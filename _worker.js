@@ -55,15 +55,26 @@ const MEM=new Map(),RLM=new Map();
 const memo=async(k,ms,fn)=>{const n=Date.now(),h=MEM.get(k);if(h&&h.e>n)return h.v;const v=await fn();if(MEM.size>3000)MEM.clear();MEM.set(k,{v,e:n+ms});return v};
 const memoDel=k=>MEM.delete(k);
 function hitMem(k,max,ms){const n=Date.now();let r=RLM.get(k);if(!r||r.e<n){r={c:0,e:n+ms};RLM.set(k,r);if(RLM.size>6000)for(const[x,v]of RLM)if(v.e<n)RLM.delete(x)}r.c++;return r.c>max}
-async function hit(env,key,max,ttl){const k=key+':'+Math.floor(Date.now()/(ttl*1000)),n=(+(await env.KV.get(k))||0)+1;await env.KV.put(k,String(n),{expirationTtl:Math.max(60,ttl*2)});return n>max}
-async function spend(env,key,n,max,ttl){const k=key+':'+Math.floor(Date.now()/(ttl*1000)),c=+(await env.KV.get(k))||0;if(c+n>max)return true;await env.KV.put(k,String(c+n),{expirationTtl:Math.max(60,ttl*2)});return false}
+async function hit(env,key,max,ttl){try{const k=key+':'+Math.floor(Date.now()/(ttl*1000));if(env.KV&&env.KV.incr)return (await env.KV.incr(k,ttl*2))>max;const n=(+(await env.KV.get(k))||0)+1;await env.KV.put(k,String(n),{expirationTtl:Math.max(60,ttl*2)});return n>max}catch{return hitMem('kvf:'+key,max,ttl*1000)}} /* KV quota hit or KV down: fall back to the in-isolate counter instead of failing the request */
+async function spend(env,key,n,max,ttl){try{const k=key+':'+Math.floor(Date.now()/(ttl*1000)),c=+(await env.KV.get(k))||0;if(c+n>max)return true;await env.KV.put(k,String(c+n),{expirationTtl:Math.max(60,ttl*2)});return false}catch{return hitMem('kvs:'+key,max,ttl*1000)}}
 
 /* ───────────── secrets, JWT, AES ───────────── */
 const secret=env=>{const s=env.JWT_SECRET||env.MASTER_KEY;if(!s||String(s).length<16)throw new Err(503,'Server is not configured: set MASTER_KEY (16+ characters) or JWT_SECRET.');return String(s)};
+/* ── key-value store on D1 (replaces Cloudflare KV: OTPs, tokens, rate limits, bans). Same get/put/delete API, TTL via expirationTtl.
+   Cloudflare KV's free plan allows only 1,000 writes a day; D1 allows 100,000, and no KV binding is needed any more. ── */
+function d1kv(env){
+ const db=env.DB,ns=()=>Math.floor(Date.now()/1000);
+ return{
+  async get(k){await migrate(env);const r=await db.prepare('SELECT v,exp FROM kvx WHERE k=?').bind(String(k)).first();if(!r)return null;if(r.exp&&r.exp<ns())return null;return r.v},
+  async put(k,v,o){await migrate(env);const t=o&&+o.expirationTtl>0?ns()+Math.max(60,Math.floor(+o.expirationTtl)):0;
+   await db.prepare('INSERT INTO kvx(k,v,exp) VALUES(?,?,?) ON CONFLICT(k) DO UPDATE SET v=excluded.v,exp=excluded.exp').bind(String(k),String(v),t).run();
+   if(Math.random()<0.01)await db.prepare('DELETE FROM kvx WHERE exp>0 AND exp<?').bind(ns()).run().catch(()=>{})},
+  async delete(k){await migrate(env);await db.prepare('DELETE FROM kvx WHERE k=?').bind(String(k)).run()},
+  async incr(k,ttl){await migrate(env);const t=ns()+Math.max(60,ttl),r=await db.prepare("INSERT INTO kvx(k,v,exp) VALUES(?,'1',?) ON CONFLICT(k) DO UPDATE SET v=CAST(v AS INTEGER)+1 RETURNING v").bind(String(k),t).first();return +(r&&r.v)||1}}}
+const withKV=env=>env&&env.DB&&!env.__d1kv?{...env,KV:d1kv(env),__d1kv:true}:env;
 /* ── diagnostics: readable reasons instead of a bare "server error" ── */
 function needBindings(env){const m=[];
  if(!env||!env.DB||typeof env.DB.prepare!=='function')m.push('DB (D1 database)');
- if(!env||!env.KV||typeof env.KV.get!=='function')m.push('KV (KV namespace)');
  if(m.length){console.error('[ClasSphera] Missing Cloudflare binding(s): '+m.join(', '));throw new Err(503,'Missing Cloudflare binding: '+m.join(' and ')+'. Add it in Cloudflare → Pages/Worker → Settings → Bindings (the variable name must match exactly), then redeploy.',{code:'missing_binding'})}}
 function whyOf(e){
  const m=String(e&&e.message||e||'unknown error').replace(/\s+/g,' ').trim().slice(0,300);
@@ -116,7 +127,9 @@ const SCHEMA=[
  'CREATE TABLE IF NOT EXISTS trusted(sub TEXT NOT NULL,uid TEXT NOT NULL,fp TEXT NOT NULL,first_seen TEXT,last_seen TEXT,PRIMARY KEY(sub,uid,fp))',
  'CREATE TABLE IF NOT EXISTS alerts(id INTEGER PRIMARY KEY AUTOINCREMENT,kind TEXT,detail TEXT,sub TEXT,at TEXT)',
  'CREATE INDEX IF NOT EXISTS idx_alerts_at ON alerts(at)',
- 'CREATE INDEX IF NOT EXISTS idx_payments_status ON payments(status,at)']]
+ 'CREATE INDEX IF NOT EXISTS idx_payments_status ON payments(status,at)']],
+['2.3',['CREATE TABLE IF NOT EXISTS kvx(k TEXT PRIMARY KEY,v TEXT NOT NULL,exp INTEGER NOT NULL DEFAULT 0)']],
+['2.4',['DROP INDEX IF EXISTS idx_kvx_exp']] /* an index doubles the write cost of every put; the table is small and purged, so a scan is cheaper */
 ];
 let MIGRATED=null;
 function migrate(env){
@@ -150,7 +163,7 @@ async function sysAlert(env,kind,detail,o={}){
   const ok=await tg(env,`🩺 <b>${X(kind)}</b>\nv${APP_V}${o.sub?' · '+X(o.sub):''}\n${X(d)}`);
   if(!ok)await sendMail(env,env.FOUNDER_EMAIL||FOUNDER_MAIL,'ClasSphera system alert: '+kind,`<pre>${X(d)}</pre>`,d);
   return ok}catch{return false}}
-async function fail(env,ip,why){if(await hit(env,'ff:'+ip,5,10)){await env.KV.put('ban:'+ip,'1',{expirationTtl:900});await alert(env,ip,'IP banned (brute force)',why)}}
+async function fail(env,ip,why){if(await hit(env,'ff:'+ip,5,10)){try{await env.KV.put('ban:'+ip,'1',{expirationTtl:900})}catch{}await alert(env,ip,'IP banned (brute force)',why)}}
 
 /* ───────────── mail / SMS / OTP delivery ───────────── */
 async function sendMail(env,to,subject,html,text){
@@ -279,10 +292,19 @@ async function subCheck(C){
  return claimed?J({valid:true,available:false}):J({valid:true,available:true,legacy:true})}
 async function idNew(C){
  const{env,ip}=C;if(hitMem('idn:'+ip,30,3600000))throw new Err(429,'rate limited');
- for(let i=0;i<8;i++){const id='M-'+[...crypto.getRandomValues(new Uint8Array(8))].map(x=>AL[x%32]).join('');if(!(await env.KV.get('id:'+id))){await env.KV.put('id:'+id,'1');return J({id})}}
+ for(let i=0;i<8;i++){const id='M-'+[...crypto.getRandomValues(new Uint8Array(8))].map(x=>AL[x%32]).join('');let used=false;try{used=!!(await env.KV.get('id:'+id));if(!used)await env.KV.put('id:'+id,'1',{expirationTtl:604800})}catch{used=false}if(!used)return J({id})}
  throw new Err(503,'retry')}
+/* Cloudflare Turnstile: human check on workspace sign-up. Secret key comes from the TURNSTILE_SECRET environment variable (never from code).
+   If the variable is not set the check is skipped, so sign-up keeps working until it is configured. */
+async function turnstileOk(env,token,ip){
+ if(!env.TURNSTILE_SECRET)return true;
+ const t=String(token||'');if(!t||t.length>2048)return false;
+ try{const f=new FormData();f.append('secret',String(env.TURNSTILE_SECRET));f.append('response',t);if(ip&&ip!=='unknown')f.append('remoteip',ip);
+  const r=await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify',{method:'POST',body:f}),j=await r.json();return !!(j&&j.success)}
+ catch{throw new Err(503,'Security check is temporarily unavailable. Please try again in a minute.')}}
 async function wsCreate(C){
  const{b,env,ip}=C,sub=String(b.sub||'');
+ if(!(await turnstileOk(env,b.ts,ip)))throw new Err(403,'Security check failed. Reload the page and try again.');
  secret(env); /* fail BEFORE anything is written: a missing MASTER_KEY used to leave a half-created, 'taken' workspace */
  if(sub!==sub.toLowerCase()||!SUBRX.test(sub)||RESERVED.includes(sub))throw new Err(400,'Invalid subdomain');
  if(hitMem('wc:'+ip,8,3600000)||await hit(env,'wc:'+ip,6,3600))throw new Err(429,'Too many workspaces created from this network. Try again later.');
@@ -310,7 +332,7 @@ async function wsCreate(C){
 /* undo a half-created workspace so the person can simply try again (never leaves a 'taken' ghost) */
 async function wsRollback(env,sub,made){try{await env.DB.batch(['ws_chunks','ws_parts','ws_index','trusted','devices','ws_meta'].map(t=>sq(env,`DELETE FROM ${t} WHERE sub=?`,sub)).concat(made?[sq(env,'DELETE FROM institutions WHERE sub=?',sub)]:[]))}catch(e){console.error('[ClasSphera] rollback failed for '+sub+': '+(e&&e.message))}}
 async function wsFind(C){
- const{b,env,ip}=C;if(hitMem('wf:'+ip,20,600000)||await hit(env,'wf:'+ip,20,600))throw new Err(429,'rate limited');
+ const{b,env,ip}=C;if(hitMem('wf:'+ip,20,600000))throw new Err(429,'rate limited');
  const m=str(b.email,120).toLowerCase();if(!MAILRX.test(m))throw new Err(400,'invalid email');
  const r=await sq(env,"SELECT sub FROM ws_index WHERE mail=? ORDER BY CASE role WHEN 'Admin' THEN 0 ELSE 1 END LIMIT 1",m).first();
  if(!r)throw new Err(404,'not found');return J({sub:r.sub})}
@@ -711,7 +733,7 @@ async function aiReport(C){
 
 /* ───────────── founder telemetry and tools ───────────── */
 async function telegram(C){
- const{b,env,ip,req}=C;if(await hit(env,'tg:'+ip,40,3600))throw new Err(429,'rate limited');
+ const{b,env,ip,req}=C;if(hitMem('tg:'+ip,40,3600000))throw new Err(429,'rate limited');
  let type=str(b.type,60)||'EVENT';
  if(!/^(THREAT|FEEDBACK|NEW_INSTITUTION|UNKNOWN_DEVICE)/.test(type)&&b.name!=null&&b.size!=null){b.itype=type;type='NEW_INSTITUTION'}
  if(type==='NEW_INSTITUTION'){
@@ -728,7 +750,7 @@ async function telegram(C){
  if(type.startsWith('THREAT')||type==='UNKNOWN_DEVICE'){await dbAudit(env,type,String(b.detail||b.note||b.sub||'').slice(0,300),ip);await r2log(env,type,String(b.detail||b.note||b.sub||''),ip)}
  return await tg(env,`${icon} <b>${X(type)}</b>\nIP: ${X(ip)}${req.cf&&req.cf.country?' · '+X(req.cf.country):''}\n${body}`)?J({ok:true}):J({error:'telegram unavailable'},502)}
 async function fAlert(C){
- const{env,ip}=C;if(hitMem('fa:'+ip,12,3600000)||await hit(env,'fa:'+ip,12,3600))return J({ok:true,limited:true},202);
+ const{env,ip}=C;if(hitMem('fa:'+ip,12,3600000))return J({ok:true,limited:true},202);
  const p=envelope(C),kind=str(p.kind,40).replace(/[^A-Z0-9_a-z-]/g,'')||'CLIENT_ALERT',sub=SUBRX.test(String(p.sub||p.tenant||''))?String(p.sub||p.tenant):null;
  const d={version:str(p.version,20),previous:str(p.previous,20),url:str(p.url,200),online:p.online,detail:p.detail&&JSON.stringify(p.detail).slice(0,500),ua:str(p.ua,160)};
  const sent=await sysAlert(env,kind,d,{sub,ip,key:kind+'|'+d.version+'|'+String(d.detail).slice(0,100),ttl:3600});return J({ok:true,sent})}
@@ -1024,14 +1046,15 @@ async function site(req,env,ctx,u,host,main,tenant){
 /* housekeeping: runs from a Cron trigger when this file is deployed as a standalone Worker */
 async function maintenance(env){
  await migrate(env);const d90=new Date(Date.now()-90*864e5).toISOString(),d180=new Date(Date.now()-180*864e5).toISOString();
- await env.DB.batch([sq(env,"DELETE FROM events WHERE at<? AND kind IN ('audit','sync')",d90),sq(env,'DELETE FROM alerts WHERE at<?',d90),sq(env,'DELETE FROM portal_inbox WHERE at<?',Date.now()-90*864e5),sq(env,'DELETE FROM trusted WHERE last_seen<?',d180),sq(env,'DELETE FROM audit WHERE at<?',new Date(Date.now()-365*864e5).toISOString())])}
+ await env.DB.batch([sq(env,"DELETE FROM events WHERE at<? AND kind IN ('audit','sync')",d90),sq(env,'DELETE FROM alerts WHERE at<?',d90),sq(env,'DELETE FROM kvx WHERE exp>0 AND exp<?',Math.floor(Date.now()/1000)),sq(env,'DELETE FROM portal_inbox WHERE at<?',Date.now()-90*864e5),sq(env,'DELETE FROM trusted WHERE last_seen<?',d180),sq(env,'DELETE FROM audit WHERE at<?',new Date(Date.now()-365*864e5).toISOString())])}
 
 export default{
  async fetch(req,env,ctx){
+  env=withKV(env);
   const u=new URL(req.url),host=u.hostname.toLowerCase(),ip=req.headers.get('cf-connecting-ip')||'unknown',tenant=tenantSub(host),main=host===APEX||!!tenant;
   if(u.protocol==='http:'&&main)return Response.redirect('https://'+u.host+u.pathname+u.search,301);
   if(u.pathname.startsWith('/api/'))return api(req,env,ctx,u,ip,tenant);
   try{return await site(req,env,ctx,u,host,main,tenant)}
   catch(e){if(ctx&&ctx.waitUntil)ctx.waitUntil(sysAlert(env,'PAGE_EXCEPTION',`${u.pathname}: ${String(e&&e.message).slice(0,200)}`,{key:u.pathname,ttl:900,ip}));return new Response('Server error',{status:500,headers:{'cache-control':'no-store','x-robots-tag':'noindex'}})}},
- async scheduled(ev,env,ctx){ctx.waitUntil(maintenance(env).catch(e=>sysAlert(env,'MAINTENANCE_FAILED',String(e&&e.message))))}
+async scheduled(ev,env,ctx){env=withKV(env);ctx.waitUntil(maintenance(env).catch(e=>sysAlert(env,'MAINTENANCE_FAILED',String(e&&e.message))))}
 };

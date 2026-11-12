@@ -786,6 +786,13 @@ function toast(m){const e=$('#toast');e.textContent=m;e.classList.remove('hidden
 const modal=h=>{$('#mbox').innerHTML='<button type="button" class="mx" aria-label="Close" onclick="closeM()">✕</button>'+h;$('#modal').classList.add('open')},close=()=>{$('#modal').classList.remove('open');if(S.after){const f=S.after;S.after=null;f()}},closeM=close;$('#modal').onclick=e=>{if(e.target.id==='modal')close()};
 const post=async(u,b)=>{const r=await fetch(u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});const j=await r.json().catch(()=>({}));if(!r.ok)throw j;return j};
 /* rq: like post, but with a timeout and the HTTP status on errors (used for every call that must fail closed) */
+window.csTs=()=>new Promise((res,rej)=>{const KEY='0x4AAAAAAF-biULoyLkEDsI4';
+ const run=()=>{const box=document.createElement('div');box.style.cssText='position:fixed;left:0;right:0;bottom:16px;display:flex;justify-content:center;z-index:2147483647';document.body.appendChild(box);
+  let done=false,id;const fin=(f,v)=>{if(done)return;done=true;try{window.turnstile.remove(id)}catch(e){}box.remove();f(v)};
+  try{id=window.turnstile.render(box,{sitekey:KEY,appearance:'interaction-only',callback:t=>fin(res,t),'error-callback':()=>fin(rej,{error:'Security check failed. Reload the page and try again.'}),'timeout-callback':()=>fin(rej,{error:'Security check expired. Try again.'})})}catch(e){return fin(rej,{error:'Security check could not start. Reload the page and try again.'})}
+  setTimeout(()=>fin(rej,{error:'Security check timed out. Try again.'}),60000)};
+ if(window.turnstile)return run();
+ const s=document.createElement('script');s.src='https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';s.async=true;s.onload=run;s.onerror=()=>rej({error:'Could not load the security check. Check your connection and try again.'});document.head.appendChild(s)});
 const rq=(u,b,ms=15000)=>{const c=new AbortController(),tm=setTimeout(()=>c.abort(),ms);return fetch(u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b),signal:c.signal}).then(async r=>{const t=await r.text().catch(()=>''),j=(()=>{try{return JSON.parse(t)}catch(e){return null}})();if(!r.ok){const o=(j&&typeof j==='object')?j:{};o.status=r.status;if(!j&&t)o.raw=t.replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').trim().slice(0,240);throw o}return(j&&typeof j==='object')?j:{}}).finally(()=>clearTimeout(tm))};
 /* errWhy: turns any failure (server JSON error, HTML error page, timeout, offline) into one readable reason */
 const errWhy=e=>{if(e==null)return'Unknown error: no details were returned.';if(typeof e==='string')return e;if(e.name==='AbortError')return'Network timeout: the server did not answer in time.';const m=e.detail||e.message||e.error||e.reason||e.raw||'',t=(typeof m==='string'?m:JSON.stringify(m)).slice(0,300);if(e.status)return'Server replied HTTP '+e.status+(t?': '+t:' without an error message. Check the Worker logs and its database bindings.');if(e instanceof TypeError||/failed to fetch|networkerror|load failed/i.test(t))return'Network error: the browser could not reach the server. Check the connection and that the Worker route is deployed.';return t||String(e).slice(0,300)};
@@ -899,7 +906,7 @@ async function createWs(x){if(createWs.busy)return;createWs.busy=true;let st='pr
   const ws=fresh({name:x.wn,type:x.wt,size:x.ws,addr:{b:x.wb,s:x.wr,a:x.wa,c:x.wc,k:x.wk}},id);
   ws.users=[{name:x.we,email:ph,role:'Admin',mail:String(x.wm).trim().toLowerCase(),g:x.wg||null,salt,p:await hash(salt+x.wp),wk:await seal(await kek(x.wp,salt),raw)}];ws.rk={salt:rs,wk:await seal(await kek(rec,rs),raw)};ws.led=await seal(DK,enc('[]'));
   st='server: POST /api/ws/create';
-  let cj;try{cj=await rq('/api/ws/create',{sub:x.wu,ws,fp:await(window.csFp?window.csFp():'')},30000)}catch(e){if(e&&(e.status===409||e.error==='taken')){toast('That subdomain was just taken. Choose another one.');wiz(1);setTimeout(()=>window.csBad&&window.csBad('wu','That subdomain is already taken'),80);return}throw e}
+  let cj;try{cj=await rq('/api/ws/create',{sub:x.wu,ws,fp:await(window.csFp?window.csFp():''),ts:await window.csTs()},30000)}catch(e){if(e&&(e.status===409||e.error==='taken')){toast('That subdomain was just taken. Choose another one.');wiz(1);setTimeout(()=>window.csBad&&window.csBad('wu','That subdomain is already taken'),80);return}throw e}
   if(!cj||!cj.token)throw{error:'The server answered but sent no session token. Response: '+JSON.stringify(cj||{}).slice(0,200)};
   st='finishing setup';
   S.ws=ws;S.DK=DK;S.L=[];S.user={sub:x.wu,email:ph,name:x.we,role:'Admin',token:cj.token};if(window.wsAdopt)wsAdopt(ws,cj.revs||{});relay('NEW_INSTITUTION',{name:x.wn,type:x.wt,size:x.ws});
@@ -1610,7 +1617,7 @@ async function migrateLocal(sub,ph,em,pw,f){
  let free=false;try{const j=await rq('/api/subdomain/check',{sub});free=!!(j.valid&&j.available)}catch(e){return false}
  if(!free)return false;
  const u=loc.users.find(x=>x.email===ph&&x.mail===em);if(!(u&&u.p===await hash(u.salt+pw)))return false;
- const j=await rq('/api/ws/create',{sub,ws:loc,fp:f,migrate:true},30000);if(!j||!j.token)throw{};
+ const j=await rq('/api/ws/create',{sub,ws:loc,fp:f,migrate:true,ts:await window.csTs()},30000);if(!j||!j.token)throw{};
  try{['','_h'].forEach(x=>localStorage.removeItem('cs_ws_'+sub+x));localStorage.removeItem('cs_dev_'+sub)}catch(e){}
  await enter(sub,ph,em,pw,j.token);return true}
 window.csEnter=enter;window.login=async function(){if(Date.now()<S.lock)return toast('Too many attempts. Try again in a minute.');
