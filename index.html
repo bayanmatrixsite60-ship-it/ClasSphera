@@ -2883,7 +2883,7 @@ window.csLukReset=async function(){
   if(!j||!j.token)throw{error:'The server sent no session. Please try again.'}
  }catch(e){
   R.busy=false;if(btn)btn.disabled=false;const st=e&&e.status;
-  if(st===401){S.fails=(S.fails||0)+1;if(S.fails>=3)try{threat('Recovery code guessing',R.sub)}catch(_){}return say((e&&e.error)||'Ledger Unlock Key does not match, or key reset is not enabled for this account.')}
+  if(st===401){S.fails=(S.fails||0)+1;if(S.fails>=3)try{threat('Recovery code guessing',R.sub)}catch(_){}return say('Ledger Unlock Key does not match, or password reset is not switched on for this workspace yet. If the key is correct, this older workspace needs a one-time activation: sign in as administrator (use "Locked out? Founder override" if you forgot the password), then enter this same key in "Unlock the encrypted ledger". After that, this reset works.')}
   if(st===429)return say((e&&e.error)||'Too many wrong attempts. Wait 15 minutes and try again.');
   return say((e&&e.error)||'Reset service unavailable. Please try again.')}
  try{S.fails=0;await window.csEnter(R.sub,R.ph,R.em,a,j.token);toast('✅ Password changed. Ledger unlocked.')}
