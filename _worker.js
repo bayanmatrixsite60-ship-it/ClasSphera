@@ -452,6 +452,34 @@ async function masterOverride(C){
  await env.KV.put('skipotp:'+sub,'1',{expirationTtl:1800});
  await alert(env,ip,'Master override used',`workspace ${sub}`);return J({temp})}
 
+/* ───────────── Ledger Unlock Key: reset a lost password with the recovery code ─────────────
+   The recovery code itself never reaches the server. The browser derives a 64-hex proof (rc) from it.
+   rv (the proof saved inside the admin-only "rk" section) is set once by recEnroll, or at workspace creation. */
+const sealOk=w=>isO(w)&&typeof w.iv==='string'&&typeof w.ct==='string'&&w.iv.length<=64&&w.ct.length<=4000;
+async function recEnroll(C){
+ const{b,env,ip}=C,s=await need(C,['Admin']),rv=String(b.rv||'');
+ if(!FPRX.test(rv))throw new Err(400,'Invalid recovery proof');
+ if(hitMem('re:'+ip,20,600000))throw new Err(429,'rate limited');
+ await mutatePart(env,s.sub,'rk',rk=>{if(!isO(rk)||!isO(rk.wk)||typeof rk.salt!=='string')throw new Err(404,'Recovery key not found');return{...rk,rv}});
+ await dbAudit(env,'Recovery reset enabled',s.sub,ip);return J({ok:true})}
+async function wsRecover(C){
+ const{b,env,ip}=C,sub=str(b.sub,40).toLowerCase(),phone=nph(b.phone),mail=str(b.mail,120).toLowerCase(),rc=String(b.rc||''),p=String(b.p||''),salt=String(b.salt||''),fp=String(b.fp||''),wk=b.wk;
+ if(!SUBRX.test(sub)||!PHONERX.test(phone)||!MAILRX.test(mail)||!FPRX.test(rc)||!FPRX.test(p)||!FPRX.test(fp)||!/^[A-Za-z0-9]{8,128}$/.test(salt))throw new Err(400,'Invalid request');
+ if(wk!==undefined&&wk!==null&&!sealOk(wk))throw new Err(400,'Invalid request');
+ if(hitMem('rc:'+ip,15,900000)||await hit(env,'rc:'+ip,10,3600))throw new Err(429,'Too many attempts. Try again later.');
+ const lk='rcf:'+sub+':'+phone,fails=+(await env.KV.get(lk))||0;if(fails>=5)throw new Err(429,'Too many wrong attempts. Wait 15 minutes.');
+ const u=await findUser(env,sub,phone,mail),rk=u&&u.role==='Admin'?await getJson(env,sub,'rk'):null,rv=isO(rk)?String(rk.rv||''):'';
+ /* one answer for every failure (wrong code, unknown account, or reset not enabled yet) so nothing about the account leaks */
+ if(!(FPRX.test(rv)&&eq(rc,rv))){await env.KV.put(lk,String(fails+1),{expirationTtl:900});await fail(env,ip,'recovery '+sub);await dbAudit(env,'Recovery code failed',sub,ip);throw new Err(401,'Ledger Unlock Key does not match, or key reset is not enabled for this account. Ask the founder for a master key reset.')}
+ await env.KV.delete(lk);
+ let done=false;
+ await mutatePart(env,sub,'users',us=>{if(!Array.isArray(us))throw new Err(404,'workspace not found');const a=us.find(x=>x&&x.role==='Admin'&&x.email===phone&&String(x.mail||'').toLowerCase()===mail);if(!a)throw new Err(404,'administrator not found');a.salt=salt;a.p=p;if(wk)a.wk=wk;else delete a.wk;done=true;return us});
+ if(!done)throw new Err(404,'workspace not found');
+ await env.KV.put('sxu:'+sub+':'+phone,String(nowS()),{expirationTtl:90000});memoDel('rv:'+sub+':'+phone); /* every older session of this administrator ends; the new one below is issued after this second */
+ await trustDevice(env,sub,phone,fp,ip);
+ await alert(env,ip,'Password reset with recovery code',`workspace ${sub}`);
+ return sessResp(await issue(C,{sub,ph:phone,role:'Admin'},fp),{ok:true})}
+
 /* ───────────── passkeys (WebAuthn) and authenticator app (TOTP) ───────────── */
 function derToRaw(sig,len){
  if(sig[0]!==0x30)throw new Error('der');let i=2;if(sig[1]&0x80)i=2+(sig[1]&0x7f);
@@ -828,7 +856,7 @@ async function health(C){
 /* ───────────── API router ───────────── */
 const R={
  '/api/telegram':telegram,'/api/master-override':masterOverride,'/api/oauth/claim':oauthClaim,'/api/id/new':idNew,'/api/subdomain/check':subCheck,
- '/api/ws/create':wsCreate,'/api/ws/find':wsFind,'/api/ws/salt':wsSalt,'/api/ws/login':wsLogin,'/api/ws/load':wsLoad,'/api/ws/save':wsSave,
+ '/api/ws/create':wsCreate,'/api/ws/find':wsFind,'/api/ws/salt':wsSalt,'/api/ws/login':wsLogin,'/api/ws/load':wsLoad,'/api/ws/save':wsSave,'/api/ws/recover':wsRecover,'/api/ws/recover/enroll':recEnroll,
  '/api/otp/verify':otpVerify,'/api/session/check':sessCheck,'/api/session/logout':sessLogout,'/api/devices/list':devList,'/api/devices/revoke':devRevoke,
  '/api/passkey/challenge':pkChallenge,'/api/passkey/register':pkRegister,'/api/passkey/verify':pkVerify,'/api/mfa/totp/enable':totpEnable,'/api/mfa/totp/verify':totpVerify,
  '/api/preferences':prefs,'/api/schema/fields':schemaFields,'/api/audit':clientEvent,'/api/sync':clientEvent,

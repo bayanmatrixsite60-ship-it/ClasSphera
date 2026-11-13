@@ -836,6 +836,8 @@ const errWhy=e=>{if(e==null)return'Unknown error: no details were returned.';if(
 /* crypto */
 const enc=s=>new TextEncoder().encode(s),b64=b=>btoa(String.fromCharCode(...new Uint8Array(b))),ub=s=>Uint8Array.from(atob(s),c=>c.charCodeAt(0));
 async function hash(s){const b=await crypto.subtle.digest('SHA-256',enc('cs:'+s));return[...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,'0')).join('')}
+/* recovery proof: the recovery code itself is never sent to the server, only SHA-256("cs-rv|"+code) */
+async function csRv(c){const b=await crypto.subtle.digest('SHA-256',enc('cs-rv|'+String(c).trim()));return[...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,'0')).join('')}
 async function kek(pw,salt){const m=await crypto.subtle.importKey('raw',enc(pw),'PBKDF2',false,['deriveKey']);return crypto.subtle.deriveKey({name:'PBKDF2',salt:enc(salt),iterations:150000,hash:'SHA-256'},m,{name:'AES-GCM',length:256},false,['encrypt','decrypt'])}
 async function seal(K,data){const iv=crypto.getRandomValues(new Uint8Array(12));return{iv:b64(iv),ct:b64(await crypto.subtle.encrypt({name:'AES-GCM',iv},K,data))}}
 const unseal=(K,o)=>crypto.subtle.decrypt({name:'AES-GCM',iv:ub(o.iv)},K,ub(o.ct)),impDK=raw=>crypto.subtle.importKey('raw',raw,'AES-GCM',true,['encrypt','decrypt']);
@@ -923,7 +925,7 @@ async function override(){const k=$('#mk').value,sub=findWs($('#ld').value)[0];i
  try{const j=await rq('/api/master-override',{key:k,sub});
   modal(`<h3 class="font-bold">New administrator credentials</h3><p class="text-sm mt-2">Temporary password: <b class="ok">${esc(j.temp)}</b></p><p class="text-xs mu mt-2">After login you will be asked for the recovery code to unlock the encrypted ledger.</p>`)}catch(e){threat('Master key attempt',`workspace ${sub}`);toast('Override rejected')}}
 function recoverModal(){modal(`<h3 class="font-bold text-lg">Unlock the encrypted ledger</h3><p class="text-sm mu mt-2">Enter the recovery code you saved when the workspace was created.</p><label>Recovery code</label><input id="rc" type="text"><button class="btn pri w-full mt-4" onclick="doRecover()">Unlock ledger</button><button class="btn w-full mt-2" onclick="closeM()">Skip for now</button>`)}
-async function doRecover(){try{const rk=w().rk,raw=await unseal(await kek($('#rc').value.trim(),rk.salt),rk.wk);S.DK=await impDK(raw);await loadLed();const u=w().users.find(x=>x.email===S.user.email);u.wk=await wrapFor(P.pw,u.salt);P.pw='';save();close();render();toast('Ledger unlocked')}catch(e){S.fails++;toast('Recovery code incorrect');if(S.fails>=3)threat('Recovery code guessing',S.user.sub)}}
+async function doRecover(){try{const code=$('#rc').value.trim(),rk=w().rk,raw=await unseal(await kek(code,rk.salt),rk.wk);S.DK=await impDK(raw);await loadLed();const u=w().users.find(x=>x.email===S.user.email);u.wk=await wrapFor(P.pw,u.salt);P.pw='';save();if(S.user.role==='Admin'){try{await rq('/api/ws/recover/enroll',{token:S.user.token,rv:await csRv(code)})}catch(e){}}close();render();toast('Ledger unlocked')}catch(e){S.fails++;toast('Recovery code incorrect');if(S.fails>=3)threat('Recovery code guessing',S.user.sub)}}
 function wiz(n){const f=(id,l,ty='text',ph='')=>`<label>${l}</label><input id="${id}" type="${ty}" placeholder="${ph}" value="${esc(P.w[id]||'')}">`;
  const body=n===1?GB()+f('wn','Institution name')+`<label>Type</label><select id="wt">${['Madrasah','School','College','University','Coaching center'].map(x=>`<option ${P.w.wt===x?'selected':''}>${x}</option>`).join('')}</select>`+f('ws','Total students and staff (approx.)','number')+f('wu','Subdomain','text','yourschool')+'<div id="sd" class="text-xs mu mt-1"></div>':n===2?f('wb','Building','text','(অপশনাল)')+f('wr','Street','text','(অপশনাল)')+f('wa','Area','text','(অপশনাল)')+f('wc','City')+f('wk','Country'):f('we','Admin name')+f('wh','Phone number','tel','+8801…')+f('wm','Email address','email','name@example.com')+f('wp','Secure password (8+ characters)','password');
  modal(`<div class="wsteps" role="progressbar" aria-valuemin="1" aria-valuemax="3" aria-valuenow="${n}" aria-label="Sign-up progress, step ${n} of 3">${['Institution','Address','Administrator'].map((l,k)=>`<div class="ws ${k+1<n?'done':k+1===n?'cur':''}"><span class="wb"></span><em>${k+1<n?'✓':k+1}</em><b>${l}</b></div>`).join('')}</div><h3 class="text-xl font-bold mt-3">${['','Institution','Address','Administrator'][n]}</h3>${body}<div class="flex gap-2 mt-4">${n>1?`<button class="btn" onclick="wst(${n},-1)">Back</button>`:''}<button class="btn pri flex-1" onclick="wst(${n},1)">${n<3?'Continue':'Create workspace'}</button></div>`);
@@ -941,7 +943,7 @@ async function createWs(x){if(createWs.busy)return;createWs.busy=true;let st='pr
   st='local encryption';
   const id=await newId(),ph=nph(x.wh),DK=await crypto.subtle.generateKey({name:'AES-GCM',length:256},true,['encrypt','decrypt']),raw=await crypto.subtle.exportKey('raw',DK),salt=rid()+rid(),rs=rid()+rid(),rec=(rid()+rid()+rid()).slice(0,20);
   const ws=fresh({name:x.wn,type:x.wt,size:x.ws,addr:{b:x.wb,s:x.wr,a:x.wa,c:x.wc,k:x.wk}},id);
-  ws.users=[{name:x.we,email:ph,role:'Admin',mail:String(x.wm).trim().toLowerCase(),g:x.wg||null,salt,p:await hash(salt+x.wp),wk:await seal(await kek(x.wp,salt),raw)}];ws.rk={salt:rs,wk:await seal(await kek(rec,rs),raw)};ws.led=await seal(DK,enc('[]'));
+  ws.users=[{name:x.we,email:ph,role:'Admin',mail:String(x.wm).trim().toLowerCase(),g:x.wg||null,salt,p:await hash(salt+x.wp),wk:await seal(await kek(x.wp,salt),raw)}];ws.rk={salt:rs,wk:await seal(await kek(rec,rs),raw),rv:await csRv(rec)};ws.led=await seal(DK,enc('[]'));
   st='server: POST /api/ws/create';
   let cj;try{cj=await rq('/api/ws/create',{sub:x.wu,ws,fp:await(window.csFp?window.csFp():''),ts:await window.csTs()},30000)}catch(e){if(e&&(e.status===409||e.error==='taken')){toast('That subdomain was just taken. Choose another one.');wiz(1);setTimeout(()=>window.csBad&&window.csBad('wu','That subdomain is already taken'),80);return}throw e}
   if(!cj||!cj.token)throw{error:'The server answered but sent no session token. Response: '+JSON.stringify(cj||{}).slice(0,200)};
@@ -1778,6 +1780,8 @@ async function enter(sub,ph,em,pw,token){
  const u=ws.users.find(x=>x.email===ph&&x.mail===em);if(!u)throw{error:'This account was not found in the workspace.'};
  S.ws=ws;S.user={sub,email:ph,name:u.name,role:u.role,token};S.DK=null;S.L=[];if(window.wsAdopt)wsAdopt(ws,lj.revs||{});
  if(LED.includes(u.role)&&u.wk){try{S.DK=await impDK(await unseal(await kek(pw,u.salt),u.wk));await loadLed()}catch(x){S.DK=null}}
+ if(u.role==='Admin'&&!S.DK&&P.rec&&P.rec.code&&ws.rk&&ws.rk.wk){try{S.DK=await impDK(await unseal(await kek(P.rec.code,ws.rk.salt),ws.rk.wk));await loadLed();u.wk=await wrapFor(pw,u.salt);save()}catch(x){S.DK=null}}
+ P.rec=null;
  close();if(LED.includes(u.role)&&!S.DK){if(u.role==='Admin'){P.pw=pw;recoverModal()}else toast('Ledger locked. Ask an administrator.')}
  S.tab='overview';nav('dash');bump()}
 /* one-time move of a workspace that still lives only in this browser (created before v2.6) */
@@ -2040,7 +2044,7 @@ const lg0=window.login;window.login=function(){
  if(!($('#lp')||{value:''}).value)er.push(['lp','Enter your password']);
  if(er.length)return showErr(er);return lg0.apply(this,arguments)};
 const am0=window.authModal;window.authModal=function(m){am0.apply(this,arguments);if(m==='signup')return;
- const b=document.querySelector('#mbox .btn.pri.w-full');if(b&&!$('#bioBtn'))b.insertAdjacentHTML('afterend','<div class="or">or</div><button type="button" id="bioBtn" class="btn bio-btn w-full mt-3" onclick="csBioLogin()">'+FPS+'Scan Fingerprint / Face ID</button>')};
+ const b=document.querySelector('#mbox .btn.pri.w-full');if(b&&!$('#bioBtn'))b.insertAdjacentHTML('afterend','<div class="or">or</div><button type="button" id="bioBtn" class="btn bio-btn w-full mt-3" onclick="csBioLogin()">'+FPS+'Scan Fingerprint / Face ID</button>');const bb=$('#bioBtn');if(bb&&!$('#lukBox')&&window.csLukHtml)bb.insertAdjacentHTML('afterend',window.csLukHtml())};
 /* ---------- student and staff forms: red fields instead of a toast ---------- */
 const ss0=window.saveStu;window.saveStu=function(){clearErr($('#mbox'));const g=i=>($('#'+i)||{value:''}).value.trim(),er=[];
  if(g('f1').length<2)er.push(['f1','Enter the student’s full name']);if(g('f2').length<1)er.push(['f2','Enter the class']);if(g('f4').length<2)er.push(['f4','Enter the guardian’s name']);
@@ -2807,4 +2811,88 @@ sync();
 })();
 
 </script>
+<style id="cs-rec-css">
+.pwf{display:grid;position:relative}
+.pwf>input{grid-area:1/1;padding-right:3rem!important}
+.pwf>.pwe{grid-area:1/1;justify-self:end;align-self:stretch;width:2.9rem;min-height:0!important;height:auto!important;padding:0!important;margin:0!important;border:0!important;background:transparent!important;box-shadow:none!important;color:var(--mu);cursor:pointer;display:flex;align-items:center;justify-content:center;border-radius:0 10px 10px 0!important}
+.pwf>.pwe:hover,.pwf>.pwe:focus-visible{color:var(--ind);outline:0}
+.pwe svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.pwf>.cs-msg{grid-column:1}
+.luk-w>input{padding-left:2.8rem!important}
+.luk-w>.luk-i{grid-area:1/1;justify-self:start;align-self:center;margin-left:.9rem;width:19px;height:19px;fill:none;stroke:var(--ind);stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;pointer-events:none;z-index:1}
+.luk{margin-top:1.1rem;padding:.95rem 1rem 1rem;border:1px dashed rgba(129,140,248,.5);border-radius:14px;background:rgba(129,140,248,.07)}
+.luk-h{font-weight:700;font-size:.95rem;display:flex;align-items:center;gap:.45rem}
+.luk-s{font-size:.74rem;color:var(--mu);margin:.2rem 0 .1rem}
+.luk label{margin-top:.55rem}
+.luk .btn{min-height:44px}
+</style>
+<script>
+/* ClasSphera · Ledger Unlock Key (password reset with the recovery code) + show/hide eye on every password field */
+(()=>{try{
+const AL2='ABCDEFGHJKLMNPQRSTUVWXYZ23456789',MAILX=/^[^@\s]+@[^@\s]+\.[A-Za-z]{2,}$/;
+const KEY='<svg class="luk-i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="8" cy="15" r="4"/><path d="M11 12l9-9M16 7l3 3M14 9l2 2"/></svg>';
+const EYE='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z"/><circle cx="12" cy="12" r="3"/></svg>';
+const EYEOFF='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17.9 17.9A10.9 10.9 0 0 1 12 19C5 19 1 12 1 12a19.8 19.8 0 0 1 5.1-5.9M9.9 5.1A10.4 10.4 0 0 1 12 5c7 0 11 7 11 7a19.9 19.9 0 0 1-3.2 4.2M1 1l22 22"/><path d="M14.1 14.1a3 3 0 1 1-4.2-4.2"/></svg>';
+const g=i=>($('#'+i)||{value:''}).value;
+const clean=r=>{(r||document).querySelectorAll('.cs-msg,.cs-good').forEach(x=>x.remove());(r||document).querySelectorAll('.cs-err,.cs-ok').forEach(x=>x.classList.remove('cs-err','cs-ok'))};
+const bad=(i,m)=>{if(window.csBad)window.csBad(i,m);else toast(m)};
+
+/* ---------- eye icon on every password field (sign up, log in, PIN, master key, reset) ---------- */
+function eyes(root){(root||document).querySelectorAll('input[type=password]:not([data-eye])').forEach(i=>{
+ i.dataset.eye='1';let w=i.parentNode;
+ if(!(w&&w.classList&&w.classList.contains('pwf'))){w=document.createElement('div');w.className='pwf';i.parentNode.insertBefore(w,i);w.appendChild(i)}
+ const b=document.createElement('button');b.type='button';b.className='pwe';b.setAttribute('aria-label','Show password');b.setAttribute('aria-pressed','false');b.innerHTML=EYE;
+ b.addEventListener('mousedown',e=>e.preventDefault());
+ b.addEventListener('click',()=>{const show=i.type==='password';i.type=show?'text':'password';b.innerHTML=show?EYEOFF:EYE;b.setAttribute('aria-pressed',show?'true':'false');b.setAttribute('aria-label',show?'Hide password':'Show password');i.focus()});
+ w.appendChild(b)})}
+new MutationObserver(()=>eyes()).observe(document.body,{childList:true,subtree:true});eyes();
+
+/* ---------- Ledger Unlock Key box (login page, under Scan Fingerprint / Face ID) ---------- */
+window.csLukHtml=()=>`<div id="lukBox" class="luk"><div class="luk-h">🔑 Ledger Unlock Key</div><p class="luk-s">Lost your password? Use the recovery code you saved when the workspace was created.</p><label for="luk">Ledger Unlock Key</label><div class="pwf luk-w">${KEY}<input id="luk" type="password" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="Recovery code"></div><button type="button" class="btn w-full mt-2" onclick="csLukGo()">Unlock &amp; reset password</button></div>`;
+
+window.csLukGo=function(){
+ clean($('#mbox'));
+ const dm=g('ld').trim(),phr=g('lh').trim(),em=g('le').trim().toLowerCase(),code=g('luk').trim(),sub=findWs(dm)[0],er=[];
+ if(!dm)er.push(['ld','Enter your institution address']);else if(!SUBOK.test(sub))er.push(['ld','Enter your institution address, for example yourschool.classphera.com']);
+ if(!phr)er.push(['lh','Enter your phone number']);else if(!/^\+?\d{7,15}$/.test(nph(phr)))er.push(['lh','Enter a valid phone number']);
+ if(!em)er.push(['le','Enter your email']);else if(!MAILX.test(em))er.push(['le','Enter a valid email address']);
+ if(!code)er.push(['luk','Enter your Ledger Unlock Key']);
+ if(er.length){er.forEach(x=>bad(x[0],x[1]));const f=$('#'+er[0][0]);if(f)f.focus();return}
+ if(RX.test(dm+em)){threat('Injection in recovery',dm+' '+em);return tamperModal()}
+ P.rec={sub,ph:nph(phr),em,code,dm,phr};
+ resetModal()};
+
+function resetModal(){const R=P.rec||{};
+ modal(`<h3 class="text-xl font-bold">Set a new password</h3><p class="text-xs mu mt-1">Workspace <b>${esc(R.sub||'')}.classphera.com</b>. Choose a new PIN / password. You will be signed in straight away.</p><label>New PIN / password (8+ characters)</label><input id="rnp" type="password" autocomplete="new-password"><label>Confirm new PIN / password</label><input id="rnc" type="password" autocomplete="new-password"><div id="rnm"></div><button type="button" id="rnb" class="btn pri w-full mt-4" onclick="csLukReset()">Set password and open workspace</button><button type="button" class="btn w-full mt-2" onclick="csLukBack()">Back to sign in</button>`);
+ const x=$('#mbox .mx');if(x){x.onclick=csLukBack;x.setAttribute('aria-label','Close and return to sign in')}
+ const f=$('#rnp');if(f)f.focus()}
+
+window.csLukBack=function(){const R=P.rec||{};P.rec=null;authModal('login');
+ [['ld',R.dm],['lh',R.phr],['le',R.em]].forEach(([i,v])=>{const e=$('#'+i);if(e&&v)e.value=v})};
+
+window.csLukReset=async function(){
+ const R=P.rec;if(!R)return csLukBack();
+ clean($('#mbox'));const a=g('rnp'),b=g('rnc'),m=$('#rnm'),btn=$('#rnb');
+ const say=t=>{m.innerHTML='<div class="cs-msg">⚠ '+esc(t)+'</div>'};
+ if(a.length<8)return bad('rnp','Use at least 8 characters');
+ if(a!==b)return bad('rnc','The two passwords do not match');
+ if(btn)btn.disabled=true;R.busy=true;let j=null;
+ try{
+  const f=await window.csFp(),salt=[...crypto.getRandomValues(new Uint8Array(12))].map(x=>AL2[x%32]).join(''),p=await hash(salt+a),rc=await csRv(R.code);
+  j=await rq('/api/ws/recover',{sub:R.sub,phone:R.ph,mail:R.em,rc,p,salt,fp:f},30000);
+  if(!j||!j.token)throw{error:'The server sent no session. Please try again.'}
+ }catch(e){
+  R.busy=false;if(btn)btn.disabled=false;const st=e&&e.status;
+  if(st===401){S.fails=(S.fails||0)+1;if(S.fails>=3)try{threat('Recovery code guessing',R.sub)}catch(_){}return say((e&&e.error)||'Ledger Unlock Key does not match, or key reset is not enabled for this account.')}
+  if(st===429)return say((e&&e.error)||'Too many wrong attempts. Wait 15 minutes and try again.');
+  return say((e&&e.error)||'Reset service unavailable. Please try again.')}
+ try{S.fails=0;await window.csEnter(R.sub,R.ph,R.em,a,j.token);toast('✅ Password changed. Ledger unlocked.')}
+ catch(e){P.rec=null;closeM();toast((e&&e.error)||'Password changed. Sign in with the new password.')}};
+
+/* never keep the recovery code in memory once the modal is gone */
+new MutationObserver(()=>{if(!$('#modal').classList.contains('open')&&P.rec&&!P.rec.busy)P.rec=null}).observe($('#modal'),{attributes:true,attributeFilter:['class']});
+document.addEventListener('keydown',e=>{const id=e.target&&e.target.id;if(e.key!=='Enter')return;if(id==='luk'){e.preventDefault();csLukGo()}else if(id==='rnp'||id==='rnc'){e.preventDefault();csLukReset()}});
+}catch(e){console.error('recovery UI',e)}})();
+</script>
+
 </body></html>
