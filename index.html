@@ -2829,7 +2829,7 @@ sync();
 <script>
 /* ClasSphera · Ledger Unlock Key (password reset with the recovery code) + show/hide eye on every password field */
 (()=>{try{
-const AL2='ABCDEFGHJKLMNPQRSTUVWXYZ23456789',MAILX=/^[^@\s]+@[^@\s]+\.[A-Za-z]{2,}$/;
+const SUBX=/^[a-z0-9](?:[a-z0-9-]{1,28}[a-z0-9])$/,AL2='ABCDEFGHJKLMNPQRSTUVWXYZ23456789',MAILX=/^[^@\s]+@[^@\s]+\.[A-Za-z]{2,}$/;
 const KEY='<svg class="luk-i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="8" cy="15" r="4"/><path d="M11 12l9-9M16 7l3 3M14 9l2 2"/></svg>';
 const EYE='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z"/><circle cx="12" cy="12" r="3"/></svg>';
 const EYEOFF='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17.9 17.9A10.9 10.9 0 0 1 12 19C5 19 1 12 1 12a19.8 19.8 0 0 1 5.1-5.9M9.9 5.1A10.4 10.4 0 0 1 12 5c7 0 11 7 11 7a19.9 19.9 0 0 1-3.2 4.2M1 1l22 22"/><path d="M14.1 14.1a3 3 0 1 1-4.2-4.2"/></svg>';
@@ -2853,7 +2853,7 @@ window.csLukHtml=()=>`<div id="lukBox" class="luk"><div class="luk-h">🔑 Ledge
 window.csLukGo=function(){
  clean($('#mbox'));
  const dm=g('ld').trim(),phr=g('lh').trim(),em=g('le').trim().toLowerCase(),code=g('luk').trim(),sub=findWs(dm)[0],er=[];
- if(!dm)er.push(['ld','Enter your institution address']);else if(!SUBOK.test(sub))er.push(['ld','Enter your institution address, for example yourschool.classphera.com']);
+ if(!dm)er.push(['ld','Enter your institution address']);else if(!SUBX.test(sub))er.push(['ld','Enter your institution address, for example yourschool.classphera.com']);
  if(!phr)er.push(['lh','Enter your phone number']);else if(!/^\+?\d{7,15}$/.test(nph(phr)))er.push(['lh','Enter a valid phone number']);
  if(!em)er.push(['le','Enter your email']);else if(!MAILX.test(em))er.push(['le','Enter a valid email address']);
  if(!code)er.push(['luk','Enter your Ledger Unlock Key']);
