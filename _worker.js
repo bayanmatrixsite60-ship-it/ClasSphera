@@ -807,7 +807,7 @@ async function oauthCallback(env,u){
   if(ge)return bad(ge==='access_denied'?'access_denied':'google_'+ge);
   if(!okState)return bad('state_expired');
   if(!code)return bad('no_code');
-  const tr=await fetch('https://oauth2.googleapis.com/token',{method:'POST',body:new URLSearchParams({code,client_id:g.id,client_secret:g.sec,redirect_uri:u.origin+'/api/oauth/google/callback',grant_type:'authorization_code'})}),t=await tr.json().catch(()=>({}));
+  const tr=await fetch('https://oauth2.googleapis.com/token',{method:'POST',body:new URLSearchParams({code,client_id:g.id,client_secret:g.sec,redirect_uri:u.origin+(u.pathname==='/auth/callback'?'/auth/callback':'/api/oauth/google/callback'),grant_type:'authorization_code'})}),t=await tr.json().catch(()=>({}));
   if(!t.access_token){console.warn('[ClasSphera] Google token exchange said: '+(t.error||tr.status)+' '+(t.error_description||''));return bad('token_'+(t.error||('http_'+tr.status)))}
   const pr=await fetch('https://openidconnect.googleapis.com/v1/userinfo',{headers:{authorization:'Bearer '+t.access_token}}),p=await pr.json().catch(()=>({}));
   if(!p.email)return bad('profile');
@@ -855,7 +855,7 @@ async function api(req,env,ctx,u,ip,tenant){
     const g=gcfg(env);
     if(!g.ok){console.warn('[ClasSphera] Google sign-in is not configured. Missing Worker binding(s): '+g.missing.join(', '));return J({error:'Google sign-in is not configured on the server. Missing: '+g.missing.join(', ')+'.',missing:g.missing},503)}
     const st=rnd(16);await env.KV.put('os:'+st,'1',{expirationTtl:600});
-    return J({url:'https://accounts.google.com/o/oauth2/v2/auth?'+new URLSearchParams({client_id:g.id,redirect_uri:u.origin+'/api/oauth/google/callback',response_type:'code',scope:'openid email profile',state:st,prompt:'select_account'})})}
+    return J({url:'https://accounts.google.com/o/oauth2/v2/auth?'+new URLSearchParams({client_id:g.id,redirect_uri:u.origin+(u.searchParams.get('cb')==='auth'?'/auth/callback':'/api/oauth/google/callback'),response_type:'code',scope:'openid email profile',state:st,prompt:'select_account'})})}
    if(p==='/api/oauth/google/callback')return await oauthCallback(env,u);
    return J({error:'not found'},404)}
   if(req.method!=='POST')return J({error:'not found'},404);
@@ -1077,6 +1077,7 @@ export default{
   env=withKV(env);
   const u=new URL(req.url),host=u.hostname.toLowerCase(),ip=req.headers.get('cf-connecting-ip')||'unknown',tenant=tenantSub(host),main=host===APEX||!!tenant;
   if(u.protocol==='http:'&&main)return Response.redirect('https://'+u.host+u.pathname+u.search,301);
+  if(u.pathname==='/auth/callback'&&(req.method==='GET'||req.method==='HEAD'))return await oauthCallback(env,u);
   if(u.pathname.startsWith('/api/'))return api(req,env,ctx,u,ip,tenant);
   try{return await site(req,env,ctx,u,host,main,tenant)}
   catch(e){if(ctx&&ctx.waitUntil)ctx.waitUntil(sysAlert(env,'PAGE_EXCEPTION',`${u.pathname}: ${String(e&&e.message).slice(0,200)}`,{key:u.pathname,ttl:900,ip}));return new Response('Server error',{status:500,headers:{'cache-control':'no-store','x-robots-tag':'noindex'}})}},
