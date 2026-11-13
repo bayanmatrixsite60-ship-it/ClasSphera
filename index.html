@@ -237,7 +237,7 @@ main .mx,.mx{background:#fff}
 .hst{display:flex;flex-wrap:wrap;gap:.6rem;margin-top:1.6rem}.hst span{padding:.5rem .85rem;border-radius:14px;background:#ffffff12;border:1px solid #ffffff22;font-size:.8rem;color:#dfe5ff}.hst b{display:block;font-size:1.05rem;color:#fff}
 .hero .btn:not(.pri){background:#ffffff12;color:#fff;border-color:#ffffff40}
 .harts svg{display:block;width:100%;height:auto;border-radius:26px;box-shadow:0 24px 70px #7c3aed55}
-.bd{background:radial-gradient(600px 300px at 8% 0,#7c3aed55,transparent 70%),radial-gradient(520px 300px at 96% 100%,#06b6d44d,transparent 70%),radial-gradient(400px 240px at 60% 40%,#ec489926,transparent 70%),#06081a;color:#e6e9f5}
+.bd{background:#06081a;color:#e6e9f5}
 .bd .sh{color:#fff}.bd .ss{color:#aab3d6}
 .ic{background:#0b1030!important;border-color:#2a3170!important;color:#e6e9f5!important}.ic b{color:#fff}.ic p{color:#aab3d6!important}.more{color:#67e8f9!important}
 .fc .art{aspect-ratio:4/3}
@@ -309,6 +309,18 @@ button.mbox{cursor:pointer;transition:.2s}button.mbox:hover{transform:translateY
 .stt td,.stt th{padding:.95rem .8rem}.stt td small{display:block;color:var(--mu)}
 .tg{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:.6rem}.tg button{text-align:start;padding:.8rem .9rem;border:1px solid var(--line);border-radius:14px;background:transparent;color:inherit;font:inherit;font-weight:600;font-size:.85rem;cursor:pointer}.tg button small{display:block;font-weight:400;color:var(--mu);margin-top:.2rem}.tg button:hover{border-color:var(--mint)}
 .cin .ib{flex:none}.cin .ib.rec{color:#f87171;border-color:#f87171}
+.vr-bar{display:flex;align-items:center;gap:.6rem;flex:1;min-width:0;padding:.35rem .25rem .6rem;color:inherit}
+.vr-dot{width:12px;height:12px;border-radius:50%;background:#ef4444;flex:none;animation:vrp 1.2s ease-out infinite}
+.vr-bar.ready .vr-dot{animation:none;opacity:.55}
+.vr-t{font-variant-numeric:tabular-nums;font-weight:700;letter-spacing:.02em}
+.vr-l{flex:1;min-width:0;font-size:.82rem;opacity:.75;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.vr-x{flex:none;border:1px solid currentColor;background:transparent;color:inherit;border-radius:99px;padding:.2rem .75rem;font-size:.8rem;cursor:pointer;opacity:.85}
+.vr-x:hover{opacity:1}
+.vr-on>#cm{display:none!important}
+.vr-b audio{display:block;width:100%;min-width:min(230px,58vw);max-width:100%;height:36px;margin-top:.3rem}
+.vr-h{font-size:.78rem;opacity:.85}
+@keyframes vrp{0%{box-shadow:0 0 0 0 rgba(239,68,68,.65)}100%{box-shadow:0 0 0 10px rgba(239,68,68,0)}}
+@media (prefers-reduced-motion:reduce){.vr-dot{animation:none}}
 /* v6: back button, modal close, dark forms, admission */
 .bk{position:sticky!important;top:calc(3.9rem + env(safe-area-inset-top,0px))!important;left:auto!important;bottom:auto!important;z-index:45;margin:.5rem 0 0 .75rem;width:max-content;padding:.7rem 1.2rem!important;gap:.5rem;border-radius:999px;background:rgba(13,15,31,.9);border:1px solid rgba(129,140,248,.5);box-shadow:0 6px 24px #0008,0 0 18px rgba(129,140,248,.25)}
 .bk:not([hidden]){display:inline-flex}.bk svg{width:26px;height:26px;fill:none;stroke:var(--mint);stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round}.bk span{font-size:.95rem!important;font-weight:700}
@@ -733,6 +745,31 @@ hr{border:0;border-top:1px solid var(--line)}
 .fcb.call{box-shadow:0 8px 24px rgba(6,182,212,.4)}
 .fcb.mail{box-shadow:0 8px 24px rgba(129,140,248,.4)}
 </style>
+<style id="cs-chat-x">
+.csact{margin-left:auto;display:flex;align-items:center;gap:.1rem;position:relative;flex:none}
+.csib{background:transparent;border:0;color:inherit;padding:.5rem;border-radius:50%;display:inline-flex;cursor:pointer;flex:none}.csib:hover{background:#ffffff1a}.csib svg{width:20px;height:20px;stroke:currentColor;stroke-width:2;fill:none;stroke-linecap:round;stroke-linejoin:round}
+.csmenu{display:none;position:absolute;right:0;top:100%;min-width:215px;background:var(--ink);color:var(--tx);border:1px solid var(--line);border-radius:12px;padding:.3rem;z-index:60;box-shadow:0 12px 30px #0008}.csmenu.open{display:block}
+.csmenu button{display:block;width:100%;text-align:left;background:none;border:0;color:var(--tx);padding:.6rem .8rem;border-radius:8px;font-size:.88rem;cursor:pointer}.csmenu button:hover{background:#ffffff14}.csmenu .dg{color:#f87171}
+.csbar{display:flex;align-items:center;gap:.4rem;padding:.4rem .7rem;border-bottom:1px solid var(--line);flex:none}.csbar[hidden]{display:none}.csbar input{flex:1;min-width:0;padding:.4rem .7rem;border-radius:99px}
+.cswrap{position:relative}.cswrap.cs-seen{margin-bottom:12px}
+.csseen{position:absolute;right:-3px;bottom:-11px;width:17px;height:17px;border-radius:50%;background:#818cf8 center/cover no-repeat;color:#05060f;font:700 9px/17px system-ui;text-align:center;font-style:normal;border:1.5px solid var(--bg)}
+.csmb{background:none;border:0;color:inherit;opacity:.7;cursor:pointer;padding:0 .15rem;font-size:.8rem;line-height:1}.csmb:hover{opacity:1}
+.csim{display:block;max-width:100%;max-height:260px;border-radius:10px;cursor:zoom-in}.csvd{display:block;max-width:100%;max-height:280px;border-radius:10px}
+.csfile{display:flex;flex-direction:column;gap:.1rem;color:inherit;text-decoration:underline;word-break:break-all}.csfile small{opacity:.7;text-decoration:none}
+.csgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:.35rem}.csgrid img,.csgrid video{width:100%;aspect-ratio:1;object-fit:cover;border-radius:8px;cursor:pointer}
+.csbig{display:block;max-width:100%;max-height:70vh;margin:auto;border-radius:10px}.csbigav{width:64px;height:64px;margin:auto;font-size:1.6rem}
+.cswps{display:grid;grid-template-columns:repeat(3,1fr);gap:.5rem}.cswp{background:none;border:1px solid var(--line);color:var(--tx);border-radius:10px;padding:.4rem;font-size:.75rem;cursor:pointer}.cswp.on{border-color:var(--mint)}.cswp span{display:block;height:44px;border-radius:7px;margin-bottom:.3rem;background:#1b1f3a}
+.cswp.w1 span{background:linear-gradient(160deg,#0b1020,#1e1b4b)}.cswp.w2 span{background:linear-gradient(160deg,#052e1c,#14532d)}.cswp.w3 span{background:linear-gradient(160deg,#4a1d2c,#7c2d12)}.cswp.w4 span{background:linear-gradient(160deg,#083344,#1e3a8a)}.cswp.w5 span{background:#e9edf9}
+html body .igr #cb[data-wp="1"]{background-image:linear-gradient(160deg,#0b1020,#1e1b4b)!important}
+html body .igr #cb[data-wp="2"]{background-image:linear-gradient(160deg,#052e1c,#14532d)!important}
+html body .igr #cb[data-wp="3"]{background-image:linear-gradient(160deg,#4a1d2c,#7c2d12)!important}
+html body .igr #cb[data-wp="4"]{background-image:linear-gradient(160deg,#083344,#1e3a8a)!important}
+html body .igr #cb[data-wp="5"]{background-image:none!important;background-color:#e9edf9!important}
+.csann{position:fixed;z-index:80;border:1px solid var(--line);background:var(--ink);color:var(--tx);cursor:pointer;font:inherit;box-shadow:0 8px 24px #0007}
+.csann:not(.new){left:.7rem;bottom:5rem;width:42px;height:42px;border-radius:50%}
+.csann.new{left:.6rem;right:.6rem;top:.6rem;padding:.7rem .9rem;border-radius:14px;border-color:#818cf8;text-align:left}
+.csann.urg{border-color:#f87171;background:#3a1220;color:#fff}
+</style>
 </head>
 <body>
 <svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs><linearGradient id="gv" x1="0" y1="0" x2="1" y2="0"><stop stop-color="#818cf8"/><stop offset="1" stop-color="#34d399"/></linearGradient><linearGradient id="gw" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#fbbf24"/><stop offset="1" stop-color="#f472b6"/></linearGradient><linearGradient id="ga" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#34d399" stop-opacity=".5"/><stop offset="1" stop-color="#34d399" stop-opacity="0"/></linearGradient><linearGradient id="ig" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#a5b4fc"/><stop offset="1" stop-color="#34d399"/></linearGradient></defs></svg>
@@ -888,11 +925,11 @@ async function override(){const k=$('#mk').value,sub=findWs($('#ld').value)[0];i
 function recoverModal(){modal(`<h3 class="font-bold text-lg">Unlock the encrypted ledger</h3><p class="text-sm mu mt-2">Enter the recovery code you saved when the workspace was created.</p><label>Recovery code</label><input id="rc" type="text"><button class="btn pri w-full mt-4" onclick="doRecover()">Unlock ledger</button><button class="btn w-full mt-2" onclick="closeM()">Skip for now</button>`)}
 async function doRecover(){try{const rk=w().rk,raw=await unseal(await kek($('#rc').value.trim(),rk.salt),rk.wk);S.DK=await impDK(raw);await loadLed();const u=w().users.find(x=>x.email===S.user.email);u.wk=await wrapFor(P.pw,u.salt);P.pw='';save();close();render();toast('Ledger unlocked')}catch(e){S.fails++;toast('Recovery code incorrect');if(S.fails>=3)threat('Recovery code guessing',S.user.sub)}}
 function wiz(n){const f=(id,l,ty='text',ph='')=>`<label>${l}</label><input id="${id}" type="${ty}" placeholder="${ph}" value="${esc(P.w[id]||'')}">`;
- const body=n===1?GB()+f('wn','Institution name')+`<label>Type</label><select id="wt">${['Madrasah','School','College','University','Coaching center'].map(x=>`<option ${P.w.wt===x?'selected':''}>${x}</option>`).join('')}</select>`+f('ws','Total students and staff (approx.)','number')+f('wu','Subdomain','text','yourschool')+'<div id="sd" class="text-xs mu mt-1"></div>':n===2?f('wb','Building')+f('wr','Street')+f('wa','Area')+f('wc','City')+f('wk','Country'):f('we','Admin name')+f('wh','Phone number','tel','+8801…')+f('wm','Email address','email','name@example.com')+f('wp','Secure password (8+ characters)','password');
+ const body=n===1?GB()+f('wn','Institution name')+`<label>Type</label><select id="wt">${['Madrasah','School','College','University','Coaching center'].map(x=>`<option ${P.w.wt===x?'selected':''}>${x}</option>`).join('')}</select>`+f('ws','Total students and staff (approx.)','number')+f('wu','Subdomain','text','yourschool')+'<div id="sd" class="text-xs mu mt-1"></div>':n===2?f('wb','Building','text','(অপশনাল)')+f('wr','Street','text','(অপশনাল)')+f('wa','Area','text','(অপশনাল)')+f('wc','City')+f('wk','Country'):f('we','Admin name')+f('wh','Phone number','tel','+8801…')+f('wm','Email address','email','name@example.com')+f('wp','Secure password (8+ characters)','password');
  modal(`<div class="wsteps" role="progressbar" aria-valuemin="1" aria-valuemax="3" aria-valuenow="${n}" aria-label="Sign-up progress, step ${n} of 3">${['Institution','Address','Administrator'].map((l,k)=>`<div class="ws ${k+1<n?'done':k+1===n?'cur':''}"><span class="wb"></span><em>${k+1<n?'✓':k+1}</em><b>${l}</b></div>`).join('')}</div><h3 class="text-xl font-bold mt-3">${['','Institution','Address','Administrator'][n]}</h3>${body}<div class="flex gap-2 mt-4">${n>1?`<button class="btn" onclick="wst(${n},-1)">Back</button>`:''}<button class="btn pri flex-1" onclick="wst(${n},1)">${n<3?'Continue':'Create workspace'}</button></div>`);
  if(n===1)$('#wu').oninput=e=>{const v=e.target.value.toLowerCase().replace(/[^a-z0-9-]/g,'');e.target.value=v;$('#sd').textContent=v?`${v}.classphera.com`:''}}
 async function wst(n,d){const ids={1:['wn','wt','ws','wu'],2:['wb','wr','wa','wc','wk'],3:['we','wh','wm','wp']}[n];ids.forEach(i=>P.w[i]=$('#'+i).value);
- if(d>0&&ids.some(i=>!String(P.w[i]).trim()))return toast('Complete every field');
+ if(d>0&&ids.some(i=>!(n===2&&['wb','wr','wa'].includes(i))&&!String(P.w[i]).trim()))return toast('Complete every field');
  if(d>0&&ids.some(i=>i!=='wp'&&RX.test(P.w[i]))){threat('Injection in sign-up',P.w[ids[0]]);return}
  if(n===1&&d>0&&ls.get('cs_ws_'+P.w.wu,null))return toast('That subdomain is taken');
  if(n===3&&d>0){if(!/^\+?\d{7,15}$/.test(nph(P.w.wh)))return toast('Enter a valid phone number');if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(P.w.wm.trim()))return toast('Enter a valid email address');if(P.w.wp.length<8)return toast('Use at least 8 characters');return createWs(P.w)}
@@ -990,10 +1027,10 @@ const fld=(id,l,v='',ty='text')=>`<label>${l}</label><input id="${id}" type="${t
 const H=(t2,b='')=>`<div class="flex justify-between items-center mb-3 flex-wrap gap-2"><h2 class="text-xl md:text-2xl font-extrabold">${t2}</h2>${b}</div>`;
 function listCard(k,title,ph){const a=w()[k];return`<div class="glass p-4"><h3 class="font-bold mb-2">${title}</h3>${a.length?a.map((x,i)=>`<div class="text-sm py-1 flex justify-between gap-2"><span>${esc(x)}</span><button class="mu bg-transparent border-0 cursor-pointer" onclick="w().${k}.splice(${i},1);save();render()" aria-label="Remove">✕</button></div>`).join(''):'<p class="text-sm mu">Nothing added yet.</p>'}<div class="flex gap-2 mt-3"><input id="in_${k}" type="text" placeholder="${ph}"><button class="btn" onclick="addItem('${k}')">Add</button></div></div>`}
 function addItem(k){const v=$('#in_'+k).value.trim();if(!v||bad(v))return;w()[k].push(v);save();render()}
-const cCon=()=>{const x=w(),me=S.user.email;return[...x.users.filter(u=>u.email!==me).map(u=>({id:u.email,n:u.name||u.email,s:u.role,k:'Team',key:[me,u.email].sort().join('|')})),...x.staff.map(a=>({id:a.id,n:a.name,s:'Staff, '+(a.subj||''),k:'Staff',key:a.id})),...x.students.filter(a=>a.gname).map(a=>({id:a.id,n:a.gname,s:'Guardian of '+a.name,k:'Guardian',key:a.id}))]};
-const cList=()=>{const x=w(),q=(P.cq||'').toLowerCase(),all=cCon(),C=all.filter(c=>(!P.cf||P.cf==='All'||c.k===P.cf)&&(!q||(c.n+' '+c.id+' '+c.s).toLowerCase().includes(q)));return C.length?C.map(c=>{const m=((x.th||{})[c.key]||[]).slice(-1)[0];return`<button class="ct ${P.cc===c.key?'on':''}" onclick="cOpen('${esc(c.key)}')"><i class="cav">${esc((c.n[0]||'?').toUpperCase())}</i><span class="f1"><b>${esc(c.n)}</b><small>${esc(m?m.x:c.s)}</small></span><em class="mu text-xs">${esc(c.id)}</em></button>`}).join(''):`<div class="empty m-3">${all.length?'No contact matches your search.':'No contacts yet. Add staff, team members, or students with guardian details and they appear here.'}</div>`};
+const cCon=()=>{const x=w(),me=S.user.email;return[...x.users.filter(u=>u.email!==me).map(u=>({id:u.email,n:u.name||u.email,s:u.role,p:u.email,k:'Team',key:[me,u.email].sort().join('|')})),...x.staff.map(a=>({id:a.id,n:a.name,s:'Staff, '+(a.subj||''),p:a.phone||'',k:'Staff',key:a.id})),...x.students.filter(a=>a.gname).map(a=>({id:a.id,n:a.gname,s:'Guardian of '+a.name,p:a.gphone||'',k:'Guardian',key:a.id}))]};
+const cList=()=>{const x=w(),q=(P.cq||'').toLowerCase(),all=cCon(),C=all.filter(c=>(!P.cf||P.cf==='All'||c.k===P.cf)&&(!q||(c.n+' '+c.id+' '+(c.p||'')+' '+c.s).toLowerCase().includes(q)));return C.length?C.map(c=>{const m=csLast(c.key);return`<button class="ct ${P.cc===c.key?'on':''}" onclick="cOpen('${esc(c.key)}')"><i class="cav">${esc((c.n[0]||'?').toUpperCase())}</i><span class="f1"><b>${esc(c.n)}</b><small>${esc(m?m.x:c.s)}</small></span><em class="mu text-xs">${esc(c.p||c.id)}</em></button>`}).join(''):`<div class="empty m-3">${all.length?'No contact matches your search.':'No contacts yet. Add staff, team members, or students with guardian details and they appear here.'}</div>`};
 const cOpen=k=>{P.cc=k;render();setTimeout(()=>{const e=$('#cb');if(e)e.scrollTop=e.scrollHeight},0)};
-const cView=()=>{const x=w(),c=cCon().find(a=>a.key===P.cc);if(!c)return`<div class="empty m-auto">Select a conversation to start messaging.</div>`;const T=(x.th||{})[c.key]||[];return`<div class="chd"><button class="btn ib mback" onclick="P.cc=null;render()" aria-label="Back to contacts"><svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg></button><i class="cav">${esc((c.n[0]||'?').toUpperCase())}</i><span><b>${esc(c.n)}</b><small class="mu block">${esc(c.s)}, ${esc(c.id)}</small></span></div><div id="cb" class="cbody">${T.length?T.map(m=>`<div class="bub ${m.f===S.user.email?'me':''}">${esc(m.x)}<small>${esc(m.t)}</small></div>`).join(''):'<p class="mu text-sm m-auto">No messages yet. Say hello.</p>'}</div><div class="cin"><input id="cm" type="text" placeholder="Write a message" onkeydown="if(event.key==='Enter')send()"><label class="btn ib" aria-label="Attach document" style="cursor:pointer"><svg viewBox="0 0 24 24"><path d="M21 11l-8.5 8.5a5 5 0 0 1-7-7L14 4a3.3 3.3 0 0 1 5 5l-8.500 8.500a1.700 1.700 0 0 1-2.500-2.500L15 8"/></svg><input type="file" hidden onchange="sendFile(this)"></label><button class="btn ib" id="mic" onclick="voice()" aria-label="Record voice note"><svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></button><button class="btn pri" onclick="send()">Send</button></div>`};
+const cView=()=>{const x=w(),c=cCon().find(a=>a.key===P.cc);if(!c)return`<div class="empty m-auto">Select a conversation to start messaging.</div>`;const T=(x.th||{})[c.key]||[];window.csC=c;csMark(c.key,T);return`<div class="chd"><button class="btn ib mback" onclick="P.cc=null;render()" aria-label="Back to contacts"><svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg></button><i class="cav">${esc((c.n[0]||'?').toUpperCase())}</i><span><b>${esc(c.n)}${csMuted(c.key)?' 🔕':''}</b><small class="mu block">${esc(c.s)}, ${esc(c.p||c.id)}</small></span>${csHead()}</div>${csBar()}<div id="cb" class="cbody" data-wp="${csWp(c.key)}">${T.length>csClr(c.key)?T.map((m,i)=>{if(i<csClr(c.key))return'';const sn=csSeen(c.key,i,m);return`<div class="bub cswrap ${m.f===S.user.email?'me':''}${sn?' cs-seen':''}" data-s="${esc((m.x||'')+' '+((m.md&&m.md.n)||''))}">${csBody(m,i)}<small>${esc(m.t)}${m.ed?' · (edited)':''}${m.f===S.user.email?` <button type="button" class="csmb" aria-label="Message options" onclick="csMsg(${i})">⋮</button>`:''}</small>${sn}</div>`}).join(''):'<p class="mu text-sm m-auto">No messages yet. Say hello.</p>'}</div><div class="cin"><input id="cm" type="text" placeholder="Write a message" onkeydown="if(event.key==='Enter')send()"><label class="btn ib" aria-label="Attach document" style="cursor:pointer"><svg viewBox="0 0 24 24"><path d="M21 11l-8.5 8.5a5 5 0 0 1-7-7L14 4a3.3 3.3 0 0 1 5 5l-8.500 8.500a1.700 1.700 0 0 1-2.500-2.500L15 8"/></svg><input type="file" hidden onchange="sendFile(this)"></label><button class="btn ib" id="mic" onclick="voice()" aria-label="Record voice note"><svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></button><button class="btn pri" onclick="send()">Send</button></div>`};
 addEventListener('storage',e=>{if(S.user&&e.key==='cs_ws_'+S.user.sub&&S.view==='dash'&&S.tab==='chat'){S.ws=ls.get(e.key,S.ws);render()}});
 const D={
 overview:()=>{const x=w(),L=LED.includes(S.user.role),F=L&&S.DK,d=Math.floor(Math.max(0,Date.now()-(x.created||Date.now()))/864e5),life=d<60?d+(d==1?' day':' days'):d<730?Math.floor(d/30)+' months':(d/365).toFixed(1)+' years',
@@ -1036,7 +1073,7 @@ async function mkLed(o){const l={...o,d:today(),rc:'R-'+String(S.L.length+1001)}
 function collect(id){const s=w().students.find(a=>a.id===id);modal(`<h3 class="text-lg font-bold">Collect fee · ${esc(s.name)}</h3>${fld('ca','Amount',s.feeAmt,'number')}${sel('cm2','Method',ALLG)}<button class="btn pri w-full mt-4" onclick="doCollect('${id}')">Record payment</button>`)}
 function doCollect(id){const s=w().students.find(a=>a.id===id),a=+$('#ca').value;if(!a)return toast('Enter an amount');mkLed({t:'Income',c:`Fee · ${s.name} (${s.feeCyc})`,a,cur:w().cur,m:$('#cm2').value})}
 function receipt(rc){const l=S.L.find(a=>a.rc===rc),i=w().inst;modal(`<div class="text-center"><div class="hd font-extrabold text-xl">${esc(i.name)}</div><div class="text-xs mu">${esc(S.user.sub)}.classphera.com</div></div><hr class="my-3" style="border-color:var(--line)"><table><tr><td>Receipt</td><td>${l.rc}</td></tr><tr><td>Date</td><td>${l.d}</td></tr><tr><td>Type</td><td>${l.t}</td></tr><tr><td>For</td><td>${esc(l.c)}</td></tr><tr><td>Method</td><td>${esc(l.m)}</td></tr><tr><td><b>Amount</b></td><td><b>${l.cur} ${l.a.toLocaleString()}</b></td></tr></table><p class="text-center mt-3">${SIG}</p><div class="flex gap-2 mt-4"><button class="btn flex-1" onclick="closeM()">Close</button><button class="btn pri flex-1" onclick="window.print()">Print</button></div>`)}
-function send(){const v=$('#cm').value.trim();if(!v||!P.cc||bad(v))return;const x=w();x.th=x.th||{};(x.th[P.cc]=x.th[P.cc]||[]).push({f:S.user.email,r:S.user.role,t:new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}),x:v});save();render();setTimeout(()=>{const e=$('#cb');if(e)e.scrollTop=e.scrollHeight;const m=$('#cm');if(m)m.focus()},0)}
+function send(){if(window.vrBusy&&window.vrBusy())return window.vrSend();const v=$('#cm').value.trim();if(!v||!P.cc||bad(v))return;const x=w();x.th=x.th||{};(x.th[P.cc]=x.th[P.cc]||[]).push({f:S.user.email,r:S.user.role,t:new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}),x:v});save();render();setTimeout(()=>{const e=$('#cb');if(e)e.scrollTop=e.scrollHeight;const m=$('#cm');if(m)m.focus()},0)}
 function setI(k,v){if(!adm()||bad(v))return;w().inst[k]=v;save();toast('Saved')}function setA(k,v){if(!adm()||bad(v))return;w().inst.addr[k]=v;save();toast('Saved')}
 async function addUser(){if(!adm())return;const nm=$('#un').value.trim(),e=nph($('#ue').value),em=$('#um').value.trim().toLowerCase(),r=$('#ur').value,p=$('#up').value;if(!nm||!e||!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(em)||p.length<8)return toast('Enter a name, phone, email and an 8+ character password');if(bad(nm))return;if(w().users.some(u=>u.email===e))return toast('That phone number already has access');
  const salt=rid()+rid(),u={name:nm,mail:em,email:e,role:r,salt,p:await hash(salt+p)};if(LED.includes(r)){if(!S.DK)return toast('Unlock the ledger first');u.wk=await wrapFor(p,salt)}w().users.push(u);save();render();toast('Member added')}
@@ -1147,7 +1184,7 @@ window.__FT=FT;
 // messages
 const AC=['#7c3aed','#06b6d4','#ec4899','#f59e0b','#10b981','#3b82f6'];
 const av=(n,i,on)=>`<i class="av" style="--a:${AC[i%6]};--b:${AC[(i+2)%6]}"><b>${esc((n[0]||'?').toUpperCase())}</b>${on?'<u></u>':''}</i>`;
-const cl=()=>{const q=(P.cq||'').toLowerCase(),f=P.cf||'All',x=w();const r=cCon().map((c,i)=>[c,i]).filter(([c])=>(f==='All'||c.k===f)&&(!q||(c.n+c.id).toLowerCase().includes(q))).map(([c,i])=>{const T=(x.th||{})[c.key]||[],l=T[T.length-1];return `<button class="cr" onclick="openChat(${i})">${av(c.n,i)}<span class="f1"><b>${esc(c.n)}</b><small>${l?esc(l.x):esc(c.s)}</small></span><em>${l?esc(l.t||''):c.k}</em></button>`}).join('');return r||`<div class="empty" style="background:#ffffff0d;border-color:#ffffff30">No contacts yet. Add team members, staff or guardians first.</div>`};
+const cl=()=>{const q=(P.cq||'').toLowerCase(),f=P.cf||'All',x=w();const r=cCon().map((c,i)=>[c,i]).filter(([c])=>(f==='All'||c.k===f)&&(!q||(c.n+c.id).toLowerCase().includes(q))).map(([c,i])=>{const l=csLast(c.key);return `<button class="cr" onclick="openChat(${i})">${av(c.n,i)}<span class="f1"><b>${esc(c.n)}</b><small>${l?esc(l.x):esc(c.s)}</small></span><em>${l?esc(l.t||''):c.k}</em></button>`}).join('');return r||`<div class="empty" style="background:#ffffff0d;border-color:#ffffff30">No contacts yet. Add team members, staff or guardians first.</div>`};
 window.openChat=i=>{const c=cCon()[i];if(c){P.cc=c.key;render()}};
 D.chat=()=>{const cs=cCon();if(P.cc&&cs.some(c=>c.key===P.cc))return `<div class="igr">${cView()}</div>`;
 return `<div class="igp"><div class="igt"><div><h2 class="ign">ClasSphera<svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></h2><small>${esc(w().inst.name||'')}</small></div><span class="ibt"><svg viewBox="0 0 24 24"><path d="M4 20h4L19 9a2.8 2.8 0 0 0-4-4L4 16z"/></svg></span></div><div class="igs"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg><input id="cq" type="search" placeholder="Search people by name or ID" value="${esc(P.cq||'')}" oninput="P.cq=this.value;$('#cl').innerHTML=chatList()"></div><div class="stories"><span class="st">${av(S.user.name||'You',0,1)}<span>You</span></span>${cs.slice(0,12).map((c,i)=>`<button class="st" onclick="openChat(${i})">${av(c.n,i+1,i%2==0)}<span>${esc(c.n.split(' ')[0])}</span></button>`).join('')}</div><div class="cf">${['All','Team','Staff','Guardian'].map(f=>`<button class="chip ${(P.cf||'All')===f?'on':''}" onclick="P.cf='${f}';render()">${f==='Guardian'?'Guardians':f}</button>`).join('')}</div><div class="igm"><b>Messages</b><span>${cs.length} contacts</span></div><div id="cl">${cl()}</div></div>`};
@@ -1244,9 +1281,129 @@ window.cfSave=id=>{const n=$('#cfn').value.trim(),v=$('#cfv').value.trim();if(!/
 window.cfSet=(id,i,v)=>{if(!adm()||bad(v))return render();const s=stu(id);s.cf[Object.keys(s.cf)[i]]=v;save();toast('Saved')};
 window.cfDel=(id,i)=>{if(!adm())return;const s=stu(id);delete s.cf[Object.keys(s.cf)[i]];save();render()};
 /* chat: documents and voice notes */
-const pushMsg=text=>{const x=w();x.th=x.th||{};(x.th[P.cc]=x.th[P.cc]||[]).push({f:S.user.email,r:S.user.role,t:new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}),x:text});save();render();setTimeout(()=>{const e=$('#cb');if(e)e.scrollTop=e.scrollHeight},0)};
-window.sendFile=i=>{const f=i.files[0];i.value='';if(!f||!P.cc)return;if(f.size>10485760)return toast('File is larger than 10 MB');const n=f.name.replace(/[^\p{L}\p{N} ._()-]/gu,'').slice(0,60);if(!n||bad(n))return;pushMsg('📎 '+n+' · '+(f.size>1048576?(f.size/1048576).toFixed(1)+' MB':Math.max(1,Math.round(f.size/1024))+' KB'))};
-window.voice=()=>{if(!P.cc)return;const b=$('#mic');if(!P.rec){P.rec=Date.now();if(b)b.classList.add('rec');toast('Recording… tap the mic again to send');return}const s=Math.max(1,Math.round((Date.now()-P.rec)/1000));P.rec=null;pushMsg('🎤 Voice note · '+Math.floor(s/60)+':'+String(s%60).padStart(2,'0'))};
+const pushMsg=(text,extra)=>{const x=w();x.th=x.th||{};(x.th[P.cc]=x.th[P.cc]||[]).push({...(extra||{}),f:S.user.email,r:S.user.role,t:new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}),x:text});save();render();setTimeout(()=>{const e=$('#cb');if(e)e.scrollTop=e.scrollHeight},0)};
+/* ---- chat v10: edit/delete, call + menu, seen avatar, media, phone identity ---- */
+(()=>{
+const CSMAX=6*1048576,DU=/^data:[a-z0-9.+\-]+\/[a-z0-9.+\-]+(;[a-z0-9=.+\-]+)*;base64,[A-Za-z0-9+\/=]+$/i,IMGU=/^data:image\/[a-z0-9.+\-]+;base64,[A-Za-z0-9+\/=]+$/i;
+const PH='<svg viewBox="0 0 24 24"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"/></svg>';
+const DOTS='<svg viewBox="0 0 24 24"><circle cx="12" cy="5" r="1.7" style="fill:currentColor"/><circle cx="12" cy="12" r="1.7" style="fill:currentColor"/><circle cx="12" cy="19" r="1.7" style="fill:currentColor"/></svg>';
+const lg=k=>{try{return JSON.parse(localStorage.getItem(k+'_'+S.user.email)||'{}')||{}}catch(e){return{}}},ls2=(k,v)=>{try{localStorage.setItem(k+'_'+S.user.email,JSON.stringify(v))}catch(e){}};
+const TH=()=>{const x=w();x.th=x.th||{};return x.th},thr=()=>TH()[P.cc]||[];
+const sz=n=>n>1048576?(n/1048576).toFixed(1)+' MB':Math.max(1,Math.round(n/1024))+' KB';
+const phn=c=>String((c&&c.p)||'').replace(/[^\d+]/g,''),okPh=p=>/^\+?\d{6,15}$/.test(p);
+const cav=(n,a,cls)=>'<i class="cav '+(cls||'')+'"'+(IMGU.test(a||'')?' style="background:url(\''+a+'\') center/cover;color:transparent"':'')+'>'+esc((n||'?')[0].toUpperCase())+'</i>';
+window.csMark=(k,T)=>{try{const me=S.user.email;if(!T.some(m=>m.f!==me))return;const th=TH(),rd=th.__rd=th.__rd&&typeof th.__rd==='object'?th.__rd:{},pv=th.__pav=th.__pav&&typeof th.__pav==='object'?th.__pav:{},r=rd[k]=rd[k]||{};let av='';try{av=localStorage.getItem('cs9_av_'+me)||''}catch(e){}if(av.length>80000||!IMGU.test(av))av='';let ch=false;if(r[me]!==T.length){r[me]=T.length;ch=true}if(av&&pv[me]!==av){pv[me]=av;ch=true}if(ch)setTimeout(save,0)}catch(e){}};
+window.csSeen=(k,i,m)=>{try{const me=S.user.email;if(m.f!==me)return'';const th=TH(),rd=(th.__rd||{})[k]||{},e=Object.keys(rd).find(v=>v!==me&&rd[v]>i);if(!e)return'';const u=(w().users||[]).find(a=>a.email===e),n=(u&&u.name)||e,a=(th.__pav||{})[e]||'';return'<i class="csseen" title="Seen by '+esc(n)+'"'+(IMGU.test(a)?' style="background-image:url(\''+a+'\')">':'>'+esc((n[0]||'?').toUpperCase()))+'</i>'}catch(e){return''}};
+window.csBody=(m,i)=>{const d=m&&m.md;if(!d||!DU.test(d.u||''))return vrBub(m);const n=esc(d.n||'file'),u=d.u;
+ if(d.k==='image'&&IMGU.test(u))return'<img class="csim" src="'+u+'" alt="'+n+'" onclick="csPrev('+i+')">';
+ if(d.k==='video'&&/^data:video\//i.test(u))return'<video class="csvd" controls preload="metadata" src="'+u+'"></video>';
+ if(d.k==='audio'&&/^data:audio\//i.test(u))return'<div class="vr-b"><span class="vr-h">🎵 '+n+'</span><audio controls preload="metadata" src="'+u+'"></audio></div>';
+ return'<a class="csfile" href="'+u+'" download="'+n+'">📄 '+n+'<small>'+esc(sz(+d.s||0))+'</small></a>'};
+window.csMuted=k=>!!lg('cs_mute')[k];window.csWp=k=>+lg('cs_wp')[k]||0;
+window.csHead=()=>'<span class="csact"><button type="button" class="csib" aria-label="Audio call" title="Audio call" onclick="csCall()">'+PH+'</button><button type="button" class="csib" aria-label="More options" title="More" onclick="csDots(event)">'+DOTS+'</button><div class="csmenu" id="csmenu"><button type="button" onclick="csAct(\'view\')">View contact / profile</button><button type="button" onclick="csAct(\'search\')">Search in chat</button><button type="button" onclick="csAct(\'media\')">Media, links, and docs</button><button type="button" onclick="csAct(\'mute\')">'+(csMuted(P.cc)?'Unmute notifications':'Mute notifications')+'</button><button type="button" onclick="csAct(\'wp\')">Chat theme / wallpaper</button><button type="button" class="dg" onclick="csAct(\'clear\')">Clear chat</button></div></span>';
+window.csBar=()=>'<div class="csbar" id="csbar" hidden><input id="csq" type="search" placeholder="Search in chat" oninput="csFilter(this.value)" onkeydown="if(event.key===\'Escape\')csAct(\'search\')"><small id="csn" class="mu"></small><button type="button" class="csib" aria-label="Close search" onclick="csAct(\'search\')">✕</button></div>';
+window.csDots=e=>{e.stopPropagation();const m=$('#csmenu');if(m)m.classList.toggle('open')};
+document.addEventListener('click',e=>{const m=$('#csmenu');if(m&&m.classList.contains('open')&&!e.target.closest('.csact'))m.classList.remove('open')});
+window.csFilter=v=>{const q=String(v||'').toLowerCase().trim();let n=0;document.querySelectorAll('#cb .bub').forEach(b=>{const h=!!q&&!(b.dataset.s||'').toLowerCase().includes(q);b.style.display=h?'none':'';if(q&&!h)n++});const c=$('#csn');if(c)c.textContent=q?n+' found':''};
+window.csCall=()=>{const c=window.csC;if(!c)return;const p=phn(c);if(!okPh(p))return toast('No phone number registered for this contact');modal('<div class="text-center">'+cav(c.n,'', 'csbigav')+'<h3 class="text-lg font-bold mt-3">'+esc(c.n)+'</h3><p class="text-sm mu mt-1">'+esc(c.p)+'</p><div class="grid gap-2 mt-4"><a class="btn pri text-center" href="tel:'+esc(p)+'">📞 Audio call</a><button type="button" class="btn" onclick="closeM()">Cancel</button></div></div>')};
+window.csAct=a=>{const m=$('#csmenu');if(m)m.classList.remove('open');const c=window.csC,T=thr();
+ if(a==='view'){if(!c)return;const p=phn(c);modal('<div class="text-center">'+cav(c.n,'','csbigav')+'<h3 class="text-lg font-bold mt-3">'+esc(c.n)+'</h3><p class="text-sm mu mt-1">'+esc(c.s)+'</p></div><div class="grid gap-2 mt-4 text-sm"><div><span class="mu">Phone</span><br><b>'+esc(c.p||'Not registered')+'</b></div><div><span class="mu">ID</span><br><b>'+esc(c.id)+'</b></div></div>'+(okPh(p)?'<a class="btn pri text-center block mt-4" href="tel:'+esc(p)+'">📞 Audio call</a>':'')+'<button type="button" class="btn w-full mt-2" onclick="closeM()">Close</button>')}
+ else if(a==='search'){const b=$('#csbar');if(!b)return;b.hidden=!b.hidden;const i=$('#csq');if(b.hidden){if(i)i.value='';csFilter('')}else if(i)i.focus()}
+ else if(a==='media'){const im=[],dc=[],lk=[];T.forEach((m,i)=>{if(i<csClr(P.cc))return;const d=m.md;if(d&&DU.test(d.u||'')){if((d.k==='image'&&IMGU.test(d.u))||(d.k==='video'&&/^data:video\//i.test(d.u)))im.push([m,i]);else dc.push([m,i])}else if(m.au)dc.push([m,i]);((typeof m.x==='string'&&!d&&!m.au?m.x.match(/https?:\/\/[^\s<>"']+/g):null)||[]).forEach(u=>lk.push(u))});
+  modal('<h3 class="text-lg font-bold">Media, links, and docs</h3><h4 class="text-sm mu mt-3">Media ('+im.length+')</h4><div class="csgrid">'+(im.map(([m,i])=>m.md.k==='image'?'<img src="'+m.md.u+'" alt="" onclick="csPrev('+i+')">':'<video src="'+m.md.u+'" onclick="csPrev('+i+')"></video>').join('')||'<p class="text-xs mu">Nothing shared yet.</p>')+'</div><h4 class="text-sm mu mt-3">Docs and audio ('+dc.length+')</h4><div class="grid gap-1">'+(dc.map(([m,i])=>m.md?'<a class="csfile" href="'+m.md.u+'" download="'+esc(m.md.n||'file')+'">'+(m.md.k==='audio'?'🎵 ':'📄 ')+esc(m.md.n||'file')+'</a>':'<span class="text-sm">🎤 Voice note · '+esc(m.t)+'</span>').join('')||'<p class="text-xs mu">Nothing shared yet.</p>')+'</div><h4 class="text-sm mu mt-3">Links ('+lk.length+')</h4><div class="grid gap-1">'+(lk.map(u=>'<a class="text-sm cy" style="word-break:break-all" target="_blank" rel="noopener noreferrer" href="'+esc(u)+'">'+esc(u)+'</a>').join('')||'<p class="text-xs mu">No links yet.</p>')+'</div>')}
+ else if(a==='mute'){const o=lg('cs_mute');if(o[P.cc])delete o[P.cc];else o[P.cc]=1;ls2('cs_mute',o);toast(o[P.cc]?'Notifications muted':'Notifications on');render()}
+ else if(a==='wp'){const cur=csWp(P.cc);modal('<h3 class="text-lg font-bold">Chat theme / wallpaper</h3><div class="cswps mt-3">'+['Default','Midnight','Forest','Sunset','Ocean','Plain'].map((n,i)=>'<button type="button" class="cswp w'+i+(cur===i?' on':'')+'" onclick="csWpSet('+i+')"><span></span>'+n+'</button>').join('')+'</div><button type="button" class="btn w-full mt-3" onclick="closeM()">Close</button>')}
+ else if(a==='clear'){if(!c)return;modal('<h3 class="text-lg font-bold">Clear chat</h3><p class="text-sm mu mt-2">This chat will be cleared from your side only. The other person keeps their copy.</p><div class="grid gap-2 mt-4"><button type="button" class="btn pri" onclick="csClear()">Clear chat</button><button type="button" class="btn" onclick="closeM()">Cancel</button></div>')}};
+window.csWpSet=i=>{const o=lg('cs_wp');if(i)o[P.cc]=i;else delete o[P.cc];ls2('cs_wp',o);close();render()};
+window.csClr=k=>{const c=(TH().__clr||{})[k];return c&&+c[S.user.email]||0};window.csVis=k=>((w().th||{})[k]||[]).slice(csClr(k));window.csLast=k=>csVis(k).slice(-1)[0];
+window.csClear=()=>{const th=TH(),T=th[P.cc]||[],c=th.__clr=th.__clr&&typeof th.__clr==='object'?th.__clr:{};(c[P.cc]=c[P.cc]||{})[S.user.email]=T.length;save();close();render()};
+window.csPrev=i=>{const m=thr()[i],d=m&&m.md;if(!d||!DU.test(d.u||''))return;modal(d.k==='video'?'<video class="csbig" controls autoplay src="'+d.u+'"></video>':'<img class="csbig" src="'+d.u+'" alt="">')};
+window.csMsg=i=>{const m=thr()[i];if(!m||m.f!==S.user.email)return;modal('<h3 class="text-lg font-bold">Message</h3><div class="grid gap-2 mt-3">'+(!m.au&&!m.md?'<button type="button" class="btn pri" onclick="csEdit('+i+')">Edit</button>':'')+'<button type="button" class="btn" onclick="csDelAsk('+i+')">Delete</button><button type="button" class="btn" onclick="closeM()">Cancel</button></div>')};
+window.csEdit=i=>{const m=thr()[i];if(!m||m.f!==S.user.email||m.au||m.md)return;modal('<h3 class="text-lg font-bold">Edit message</h3><input id="csei" class="mt-3" type="text" maxlength="2000" value="'+esc(m.x)+'" onkeydown="if(event.key===\'Enter\')csEditSave('+i+')"><button type="button" class="btn pri w-full mt-3" onclick="csEditSave('+i+')">Save</button><button type="button" class="btn w-full mt-2" onclick="closeM()">Cancel</button>');setTimeout(()=>{const e=$('#csei');if(e){e.focus();e.setSelectionRange(e.value.length,e.value.length)}},50)};
+window.csEditSave=i=>{const m=thr()[i],e=$('#csei');if(!m||!e||m.f!==S.user.email)return;const v=e.value.trim();if(!v||bad(v))return;if(v!==m.x){m.x=v;m.ed=1;save()}close();render()};
+window.csDelAsk=i=>{modal('<h3 class="text-lg font-bold">Delete message</h3><p class="text-sm mu mt-2">This message will be deleted permanently.</p><div class="grid gap-2 mt-4"><button type="button" class="btn pri" onclick="csDel('+i+')">Delete</button><button type="button" class="btn" onclick="closeM()">Cancel</button></div>')};
+window.csDel=i=>{const T=thr(),m=T[i];if(!m||m.f!==S.user.email)return;T.splice(i,1);const rd=(TH().__rd||{})[P.cc];if(rd)Object.keys(rd).forEach(e=>{if(rd[e]>i)rd[e]--});const cl=(TH().__clr||{})[P.cc];if(cl)Object.keys(cl).forEach(e=>{if(cl[e]>i)cl[e]--});save();close();render()};
+const rdU=(f,k)=>new Promise(ok=>{const r=new FileReader();r.onerror=()=>ok('');r.onload=()=>{let u=String(r.result);if(k==='file')u=u.replace(/^data:[^;,]*/,'data:application/octet-stream');if(k!=='image'||/gif|svg/.test(f.type)||f.size<819200)return ok(u);const im=new Image();im.onload=()=>{try{const s=Math.min(1,1600/Math.max(im.width,im.height)),c=document.createElement('canvas');c.width=Math.round(im.width*s);c.height=Math.round(im.height*s);c.getContext('2d').drawImage(im,0,0,c.width,c.height);const j=c.toDataURL('image/jpeg',.82);ok(j.length<u.length?j:u)}catch(e){ok(u)}};im.onerror=()=>ok(u);im.src=u};r.readAsDataURL(f)});
+window.sendFile=i=>{const f=i.files[0];i.value='';if(!f||!P.cc)return;if(f.size>CSMAX)return toast('File is larger than 6 MB');const n=f.name.replace(/[^\p{L}\p{N} ._()-]/gu,'').slice(0,60);if(!n||bad(n))return;const t=f.type||'',k=/^image\//.test(t)?'image':/^video\//.test(t)?'video':/^audio\//.test(t)?'audio':'file',ic={image:'🖼️',video:'🎬',audio:'🎵',file:'📎'}[k],key=P.cc;
+ rdU(f,k).then(u=>{if(!u||!DU.test(u))return toast('Could not read that file');if(P.cc!==key)return;if(JSON.stringify(TH()).length+u.length>20e6)return toast('Chat storage is full. Delete old media first.');pushMsg(ic+' '+n+' · '+sz(f.size),{md:{k,u,n,s:f.size}})})};
+})();
+/* ---- chat v10: real notifications for incoming private messages ---- */
+(()=>{
+let cur='',NS={},asked=false;
+const IMG=/^(data:image\/[a-z0-9.+\-]+;base64,[A-Za-z0-9+\/=]+|https:\/\/[^\s"'<>]+)$/i;
+const scan=()=>{try{if(!S||!S.user||!S.ws)return;const me=S.user.email,th=S.ws.th||{},first=cur!==me;if(first){cur=me;NS={}}
+ Object.keys(th).forEach(k=>{const T=th[k];if(k.indexOf('__')===0||!Array.isArray(T))return;const pv=NS[k];NS[k]=T.length;
+  if(first||!k.split('|').includes(me))return;const from=T.slice(pv===undefined?0:pv).filter(m=>m&&m.f!==me),m=from[from.length-1];if(!m)return;
+  if(csMuted(k)||(P.cc===k&&!document.hidden))return;
+  const u=(S.ws.users||[]).find(a=>a.email===m.f),name=(u&&u.name)||m.f,av=(th.__pav||{})[m.f],lg=(S.ws.inst||{}).logo,icon=IMG.test(av||'')?av:IMG.test(lg||'')?lg:'/icon-192.png',txt=String(m.x||'').slice(0,160);
+  if('Notification' in window&&Notification.permission==='granted'){const o={body:txt+'\n🕒 '+(m.t||''),icon,badge:'/icon-192.png',tag:'cs-'+k,renotify:true,timestamp:Date.now()};
+   try{const n=new Notification(name,o);n.onclick=()=>{try{focus()}catch(e){}n.close();S.tab='chat';P.cc=k;render()}}catch(e){try{navigator.serviceWorker.ready.then(r=>r.showNotification(name,o))}catch(e2){}}}
+  else toast(name+': '+txt)})}catch(e){}};
+setInterval(scan,3000);document.addEventListener('visibilitychange',()=>setTimeout(scan,1500));
+document.addEventListener('click',()=>{if(asked||!S||!S.user||!('Notification' in window)||Notification.permission!=='default')return;asked=true;try{Notification.requestPermission()}catch(e){}});
+})();
+/* voice notes: real recording with MediaRecorder (tap mic = start, Send = send, Cancel = discard) */
+(()=>{
+const MAXS=60,BPS=24000,VR={st:'idle',key:null,rec:null,stream:null,blob:null,t0:0,secs:0,tick:0,mime:''};
+const fmt=s=>Math.floor(s/60)+':'+String(s%60).padStart(2,'0');
+const pick=()=>{try{return['audio/webm;codecs=opus','audio/webm','audio/mp4','audio/ogg;codecs=opus','audio/ogg'].find(t=>MediaRecorder.isTypeSupported(t))||''}catch(e){return''}};
+const freeMic=()=>{try{VR.stream&&VR.stream.getTracks().forEach(t=>t.stop())}catch(e){}VR.stream=null};
+const ui=()=>{
+ const inp=$('#cm'),mic=$('#mic'),par=inp&&inp.parentNode,act=VR.st==='rec'||VR.st==='stopping'||VR.st==='ready';
+ let bar=$('#vrbar');
+ if(!act||!par||P.cc!==VR.key){if(bar)bar.remove();document.querySelectorAll('.vr-on').forEach(e=>e.classList.remove('vr-on'));if(mic){mic.classList.remove('rec');mic.removeAttribute('aria-pressed')}return}
+ if(!bar||bar.parentNode!==par){if(bar)bar.remove();bar=document.createElement('div');bar.id='vrbar';bar.className='vr-bar';bar.setAttribute('role','group');bar.setAttribute('aria-label','Recording in progress');
+  bar.innerHTML='<i class="vr-dot"></i><b class="vr-t" id="vrt">0:00</b><span class="vr-l" id="vrl">Recording…</span><button type="button" class="vr-x" onclick="vrCancel()" aria-label="Cancel recording">Cancel</button>';par.insertBefore(bar,inp)}
+ par.classList.add('vr-on');bar.classList.toggle('ready',VR.st==='ready');
+ const sec=VR.st==='rec'?Math.min(MAXS,Math.floor((Date.now()-VR.t0)/1000)):VR.secs,t=$('#vrt'),ts=fmt(sec);if(t&&t.textContent!==ts)t.textContent=ts;
+ const l=$('#vrl'),lt=VR.st==='ready'?'Recorded · tap Send':'Recording…';if(l&&l.textContent!==lt)l.textContent=lt;
+ if(mic){mic.classList.add('rec');mic.setAttribute('aria-pressed','true')}
+};
+const reset=()=>{clearInterval(VR.tick);VR.tick=0;freeMic();VR.rec=null;VR.blob=null;VR.secs=0;VR.key=null;VR.st='idle';ui()};
+const stopRec=()=>new Promise(res=>{const r=VR.rec;if(!r||r.state==='inactive')return res();r.onstop=()=>{const c=r._c||[];VR.blob=c.length?new Blob(c,{type:String(r.mimeType||VR.mime||'audio/webm').split(';')[0]}):null;res()};try{r.stop()}catch(e){res()}});
+const toURL=b=>new Promise((ok,no)=>{const f=new FileReader();f.onload=()=>ok(String(f.result));f.onerror=()=>no(f.error);f.readAsDataURL(b)});
+const step=()=>{
+ if(!$('#cm')||P.cc!==VR.key)return window.vrCancel();
+ if(VR.st!=='rec')return;
+ if(Date.now()-VR.t0>=MAXS*1000){VR.st='stopping';VR.secs=MAXS;clearInterval(VR.tick);VR.tick=0;stopRec().then(()=>{if(VR.st!=='stopping')return;VR.st='ready';ui();toast('Maximum length reached (1:00). Tap Send to send it.')});return}
+ ui()};
+window.vrCancel=()=>{const r=VR.rec;if(r){r.ondataavailable=null;r.onstop=null;r.onerror=null;try{if(r.state!=='inactive')r.stop()}catch(e){}}reset()};
+window.vrBusy=()=>VR.st==='rec'||VR.st==='stopping'||VR.st==='ready';
+window.vrSend=async()=>{
+ if(VR.st==='stopping'||VR.st==='ask'||VR.st==='idle')return;
+ const key=VR.key;
+ if(VR.st==='rec'){VR.st='stopping';VR.secs=Math.min(MAXS,Math.max(1,Math.round((Date.now()-VR.t0)/1000)));clearInterval(VR.tick);VR.tick=0;await stopRec();if(VR.st!=='stopping')return}
+ const blob=VR.blob,secs=Math.max(1,VR.secs);
+ if(!blob||!blob.size){reset();return toast('Nothing was recorded. Please try again.')}
+ if(P.cc!==key){reset();return}
+ let url;try{url=await toURL(blob)}catch(e){reset();return toast('Could not read the recording. Please try again.')}
+ if(url.length>1500000){reset();return toast('That voice note is too large to send.')}
+ reset();pushMsg('🎤 Voice note · '+fmt(secs),{au:url,d:secs})};
+window.voice=async()=>{
+ if(!P.cc)return;
+ if(VR.st==='rec'||VR.st==='ready')return window.vrSend();
+ if(VR.st!=='idle')return;
+ if(!window.isSecureContext)return toast('Voice notes need a secure (HTTPS) connection.');
+ if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia||typeof MediaRecorder==='undefined')return toast('Voice recording is not supported in this browser.');
+ VR.st='ask';VR.key=P.cc;
+ let st;
+ try{st=await navigator.mediaDevices.getUserMedia({audio:true})}
+ catch(e){VR.st='idle';VR.key=null;const n=e&&e.name;return toast(n==='NotAllowedError'||n==='SecurityError'?'Microphone access is blocked. Allow it in your browser settings, then try again.':n==='NotFoundError'||n==='OverconstrainedError'?'No microphone was found on this device.':n==='NotReadableError'?'The microphone is being used by another app.':'Could not start recording.')}
+ if(VR.st!=='ask'||!$('#cm')||P.cc!==VR.key){st.getTracks().forEach(t=>t.stop());VR.st='idle';VR.key=null;return}
+ const chunks=[];VR.mime=pick();let r;
+ try{r=VR.mime?new MediaRecorder(st,{mimeType:VR.mime,audioBitsPerSecond:BPS}):new MediaRecorder(st)}
+ catch(e){try{r=new MediaRecorder(st)}catch(e2){st.getTracks().forEach(t=>t.stop());VR.st='idle';VR.key=null;return toast('Voice recording is not supported in this browser.')}}
+ r._c=chunks;r.ondataavailable=e=>{if(e.data&&e.data.size)chunks.push(e.data)};
+ r.onerror=()=>{window.vrCancel();toast('Recording stopped because of a microphone error.')};
+ const tk=st.getAudioTracks()[0];if(tk)tk.onended=()=>{if(VR.st==='rec'){window.vrCancel();toast('The microphone was disconnected.')}};
+ VR.stream=st;VR.rec=r;VR.blob=null;
+ try{r.start(1000)}catch(e){reset();return toast('Could not start recording.')}
+ VR.t0=Date.now();VR.secs=0;VR.st='rec';VR.tick=setInterval(step,250);ui()};
+window.vrUI=ui;
+window.vrBub=m=>{const u=m&&typeof m.au==='string'?m.au:'';
+ if(/^data:audio\/[a-z0-9.+-]+;base64,[A-Za-z0-9+\/=]+$/i.test(u)){const d=Math.max(0,Math.min(3600,(+m.d)|0));return'<div class="vr-b"><span class="vr-h">🎤 Voice note'+(d?' · '+fmt(d):'')+'</span><audio controls preload="metadata" src="'+u+'"></audio></div>'}
+ return esc(m.x)};
+})();
 /* wrap last, so every tab (including the student directory) gets sub-pages and the tools grid */
 Object.keys(D).forEach(k=>{if(!SUBS[k])return;const f=D[k];D[k]=()=>{if(S.sub!=null&&SUBS[k][S.sub])return subPage(k,S.sub);const r=f();return k==='chat'||(k==='students'&&S.sid)?r:r+tools(k)}});
 })();
@@ -1279,13 +1436,13 @@ function manifest(){const l=document.querySelector('link[rel=manifest]');if(!l)r
  const im=new Image();im.onload=()=>{try{const c=document.createElement('canvas');c.width=c.height=512;const x=c.getContext('2d'),g=x.createRadialGradient(256,140,10,256,256,420);g.addColorStop(0,'#1d2470');g.addColorStop(.5,'#0b0f2b');g.addColorStop(1,'#04050c');x.fillStyle=g;x.fillRect(0,0,512,512);const f=Math.min(320/im.width,320/im.height);x.drawImage(im,256-im.width*f/2,256-im.height*f/2,im.width*f,im.height*f);const u=c.toDataURL('image/png');put([{src:u,sizes:'512x512',type:'image/png',purpose:'any'},{src:u,sizes:'512x512',type:'image/png',purpose:'maskable'}])}catch(e){}};im.src=br.l}
 
 /* ---- 2. guardian / student sign-in (server: /api/g/login) ---- */
-const gForm=()=>`<div class="dform gform mx-auto"><div class="grole" role="tablist" aria-label="Sign in as"><button type="button" role="tab" aria-selected="${G.w==='student'?'false':'true'}" class="${G.w==='student'?'':'on'}" onclick="gWho('guardian')">👪 Guardian</button><button type="button" role="tab" aria-selected="${G.w==='student'?'true':'false'}" class="${G.w==='student'?'on':''}" onclick="gWho('student')">🎓 Student</button></div><h2 class="text-xl font-extrabold">${G.w==='student'?'Student':'Guardian'} sign in</h2><p class="text-xs mu mt-1 mb-2">Sign in with the details your institution gave you.</p><div class="gg"><div class="gc"><label for="gsb">Institution subdomain or name</label><input id="gsb" placeholder="yourschool.classphera.com" autocomplete="organization"></div><div class="gc"><label for="gid">Student admission ID / roll</label><input id="gid" placeholder="STU-0001" autocomplete="off"></div><div class="gc" ${G.w==='student'?'hidden':''}><label for="gmb">Registered mobile number</label><input id="gmb" type="tel" placeholder="+8801…" autocomplete="tel"></div><div class="gc"><label for="gpn">Secret PIN</label><input id="gpn" type="password" inputmode="numeric" autocomplete="one-time-code" placeholder="••••"></div></div><button class="btn pri w-full mt-4" onclick="gLogin()">Sign in</button><p class="text-xs mu mt-3">${G.w==='student'?'🔒 You will only ever see your own records.':'🔒 You will only ever see your own child’s records.'}</p></div>`;
+const gForm=()=>`<div class="dform gform mx-auto"><div class="grole" role="tablist" aria-label="Sign in as"><button type="button" role="tab" aria-selected="${G.w==='student'?'false':'true'}" class="${G.w==='student'?'':'on'}" onclick="gWho('guardian')">👪 Guardian</button><button type="button" role="tab" aria-selected="${G.w==='student'?'true':'false'}" class="${G.w==='student'?'on':''}" onclick="gWho('student')">🎓 Student</button></div><h2 class="text-xl font-extrabold">${G.w==='student'?'Student':'Guardian'} sign in</h2><p class="text-xs mu mt-1 mb-2">Sign in with the details your institution gave you.</p><div class="gg"><div class="gc"><label for="gsb">Institution subdomain or name</label><input id="gsb" placeholder="yourschool.classphera.com" autocomplete="organization"></div><div class="gc"><label for="gid">Student admission ID</label><input id="gid" placeholder="STU-0001" autocomplete="off"></div><div class="gc" ${G.w==='student'?'hidden':''}><label for="gmb">Registered mobile number</label><input id="gmb" type="tel" placeholder="+8801…" autocomplete="tel"></div><div class="gc"><label for="gpn">Secret PIN</label><input id="gpn" type="password" inputmode="numeric" autocomplete="one-time-code" placeholder="••••"></div></div><button class="btn pri w-full mt-4" onclick="gLogin()">Sign in</button><p class="text-xs mu mt-3">${G.w==='student'?'🔒 You will only ever see your own records.':'🔒 You will only ever see your own child’s records.'}</p></div>`;
 window.gWho=v=>{G.w=v;render()};
 window.gGo=()=>{close();go('guard')};
 window.gLogin=async()=>{const sub=$('#gsb').value.trim().toLowerCase().replace(/^https?:\/\//,'').replace(/\/.*$/,'').replace(/\.classphera\..*$/,''),sid=$('#gid').value.trim().toUpperCase(),pin=$('#gpn').value,ph=($('#gmb')||{}).value||'';
  {const rt=$('.gform');if(rt){rt.querySelectorAll('.cs-msg').forEach(x=>x.remove());rt.querySelectorAll('.cs-err').forEach(x=>x.classList.remove('cs-err'))}
   const er=[];if(!sub||sub.length<2)er.push(['gsb','Enter your institution’s subdomain or name']);
-  if(!sid||sid.length<2)er.push(['gid','Enter the admission ID / roll number']);
+  if(!sid||sid.length<2)er.push(['gid','Enter the admission ID']);
   if(G.w==='guardian'&&!/^\+?[\d\s\-().]{7,20}$/.test(ph.trim()))er.push(['gmb',ph.trim()?'Enter a valid mobile number':'Enter the registered mobile number']);
   if(!pin||pin.length<4)er.push(['gpn',pin?'The PIN must be at least 4 characters':'Enter your secret PIN']);
   if(er.length){er.forEach(([i,m])=>window.csBad&&window.csBad(i,m));const f=$('#'+er[0][0]);if(f)f.focus();return}}
@@ -1321,7 +1478,8 @@ window.gPrint=()=>{document.body.classList.add('gp');onafterprint=()=>document.b
 const acadCard=()=>{const d=G.d,r=d.rec||{},L=(a,h)=>(a&&a.length)?`<div class="mb-3"><div class="text-xs mu mb-1">${h}</div>${a.map(x=>`<div class="glass p-2 mb-1 text-sm">${esc(x)}</div>`).join('')}</div>`:'',m=Object.entries(d.marks||{});
  return sec('Academic progress',(L(r.lesson,G.who==='student'?'Class routine':'Sabak · Sabki · Manzil · Daily lessons')+L(r.module,'Syllabus / course modules')+L(r.task,'Homework and tasks')+(d.quran?`<div class="text-xs mu mb-1">Quran Hifz progress</div><div class="glass p-2 mb-3 text-sm">${esc(d.quran)}</div>`:'')+`<div class="text-xs mu mb-1">Exam marksheet</div>`+(m.length?`<table class="stt w-full"><tr><th>Subject</th><th>Score</th></tr>${m.map(([k,v])=>`<tr><td>${esc(k)}</td><td>${esc(v)}</td></tr>`).join('')}</table>`:'<p class="text-sm mu">No marks published yet.</p>')))};
 const teachCard=()=>{const d=G.d,n=Math.max(0,Math.min(5,+d.rate||0));return sec('Teacher rating &amp; behaviour log',`<div class="text-xl" style="color:#fbbf24">${'★'.repeat(n)}${'☆'.repeat(5-n)}</div>${(d.rem||[]).length?d.rem.map(r=>`<div class="glass p-2 mt-2 text-sm"><span class="mu text-xs">${esc(r.d)}</span><br>${esc(r.x)}</div>`).join(''):'<p class="text-sm mu mt-2">No entries yet.</p>'}`)};
-const noticeCard=()=>sec('Notice board &amp; alerts',((G.d.board||[]).length?G.d.board.map(b=>`<div class="glass p-3 mb-2 text-sm" ${b.u?'style="border-color:#f87171"':''}>${b.u?'🚨 <b style="color:#f87171">Urgent</b> · ':''}${esc(b.t)}<div class="text-xs mu mt-1">${new Date(b.at).toLocaleDateString()}</div></div>`).join(''):'<p class="text-sm mu">No notices.</p>'));
+const gNew=()=>{try{const k='cs_gseen',sn=+localStorage.getItem(k)||0,b=G.d.board||[],n=b.filter(x=>(+x.at||0)>sn).length,mx=Math.max(0,...b.map(x=>+x.at||0));if(mx>sn)setTimeout(()=>{try{localStorage.setItem(k,String(mx))}catch(e){}},6000);return n?' <span style="background:#ef4444;color:#fff;border-radius:99px;padding:.1rem .5rem;font-size:.7rem">'+n+' new</span>':''}catch(e){return''}};
+const noticeCard=()=>sec('Notice board &amp; alerts'+gNew(),((G.d.board||[]).length?G.d.board.map(b=>`<div class="glass p-3 mb-2 text-sm" ${b.u?'style="border-color:#f87171"':''}>${b.u?'🚨 <b style="color:#f87171">Urgent</b> · ':''}${esc(b.t)}<div class="text-xs mu mt-1">${new Date(b.at).toLocaleDateString()}</div></div>`).join(''):'<p class="text-sm mu">No notices.</p>'));
 const msgCard=()=>sec('Secure messages · Class teacher / Principal',`<div class="gmsg">${(G.d.msgs||[]).map(m=>`<div class="gb ${m.f==='s'?'s':'m'}">${esc(m.x)}<small>${new Date(m.at).toLocaleString()}</small></div>`).join('')||'<p class="text-sm mu">Start a private conversation with the school.</p>'}</div><div class="flex gap-2 mt-3"><input id="gmg" maxlength="1000" placeholder="Write a message"><button class="btn pri" onclick="gSend()">Send</button></div><p class="text-xs mu mt-2">🔒 Sent over TLS to your institution only.</p>`);
 window.gSend=async()=>{const x=$('#gmg').value.trim();if(!x||bad(x))return;try{const j=await gp('/api/g/send',{token:G.token,text:x});(G.d.msgs=G.d.msgs||[]).push({f:'g',x,at:j.at||Date.now()});render()}catch(e){toast(e.message)}};
 const gDash=()=>{const d=G.d,s=d.stu||{},g=G.who==='guardian';
@@ -1344,6 +1502,17 @@ ${(x.gin||[]).length?`<h4 class="font-bold mt-4 mb-2">Guardian messages</h4>`+x.
 const p0=D.portal;D.portal=()=>p0()+(adm()?gAdm():'');
 window.gaCam=v=>{if(!adm())return;w().cam=v;w().cctv=!!v;save();toast(v?'CCTV enabled. Re-publish to apply.':'CCTV disabled. Re-publish to apply.')};
 window.gaNote=()=>{const t2=$('#gnt').value.trim();if(!adm()||!t2||bad(t2))return;const x=w();x.board=x.board||[];x.board.unshift({t:t2,u:$('#gnu').checked,at:Date.now()});x.board=x.board.slice(0,30);save();render();toast('Posted. Publish to deliver.')};
+/* ---- broadcast notice: one click to teachers, staff, student and guardian portals ---- */
+const nt0=D.ntc,bcRows=()=>(w().board||[]).slice(0,5).map(b=>`<div class="glass p-2 mb-1 text-xs flex gap-2 items-center"><span class="f1">${b.u?'🚨 ':''}${esc(b.t)}<br><span class="mu">${new Date(b.at).toLocaleString()}</span></span><button type="button" class="btn" onclick="bcDel(${+b.at})">✕</button></div>`).join('');
+D.ntc=()=>nt0()+(adm()?`<div class="glass p-4 mt-4"><h3 class="font-bold">📢 Broadcast notice</h3><p class="text-xs mu mb-2">One click sends this notice to every teacher and staff member (shown when they log in) and publishes it to all student and guardian portals.</p><input id="bct" maxlength="50" placeholder="Title (optional)"><textarea id="bcm" maxlength="240" rows="3" placeholder="Write the notice"></textarea><label class="flex gap-2 items-center mt-2"><input id="bcu" type="checkbox" style="width:auto"> Mark as urgent</label><button type="button" class="btn pri mt-2" onclick="bcSend()">Send to everyone</button><div class="mt-3">${bcRows()}</div></div>`:'');
+window.bcSend=async()=>{if(!adm())return;const h=$('#bct').value.trim(),m=$('#bcm').value.trim();if(!m||bad(m)||(h&&bad(h)))return toast('Write the notice first');const x=w();x.board=x.board||[];x.board.unshift({t:(h?h+': ':'')+m,u:$('#bcu').checked,at:Date.now(),b:1});x.board=x.board.slice(0,30);save();render();toast('Notice sent. Publishing to portals...');try{await window.gaSync()}catch(e){}};
+window.bcDel=at=>{if(!adm())return;const x=w();x.board=(x.board||[]).filter(b=>b.at!==at);save();render()};
+const bcK=()=>'cs_ann_'+S.user.email,bcGet=()=>{try{return+localStorage.getItem(bcK())||0}catch(e){return 0}},bcSet=v=>{try{localStorage.setItem(bcK(),String(v))}catch(e){}};
+window.bcBoard=()=>{const b=(w().board||[]).slice(0,20);bcSet(Math.max(0,...b.map(x=>+x.at||0)));modal('<h3 class="text-lg font-bold">📢 Notice board</h3><div class="mt-3">'+(b.map(n=>`<div class="glass p-3 mb-2 text-sm" ${n.u?'style="border-color:#f87171"':''}>${n.u?'🚨 <b style="color:#f87171">Urgent</b> · ':''}${esc(n.t)}<div class="text-xs mu mt-1">${new Date(n.at).toLocaleString()}</div></div>`).join('')||'<p class="text-sm mu">No notices yet.</p>')+'</div><button type="button" class="btn w-full mt-2" onclick="closeM()">Close</button>');bcTick()};
+const bcTick=()=>{try{let el=document.getElementById('csann');if(!S||!S.user||adm()){if(el)el.remove();return}const b=w().board||[];if(!b.length){if(el)el.remove();return}const sn=bcGet(),nw=b.filter(n=>(+n.at||0)>sn);
+ if(!el){el=document.createElement('button');el.id='csann';el.type='button';el.onclick=()=>bcBoard();document.body.appendChild(el)}
+ el.className='csann'+(nw.length?' new'+(nw.some(n=>n.u)?' urg':''):'');el.innerHTML=nw.length?'📢 <b>'+nw.length+' new notice'+(nw.length>1?'s':'')+'</b> · Tap to read':'📢';el.setAttribute('aria-label','Notice board')}catch(e){const el=document.getElementById('csann');if(el)el.remove()}};
+setInterval(bcTick,2500);
 window.gaOpen=id=>{if(!adm())return;const s=sT(id),x=w();modal(`<h3 class="text-lg font-bold">Portal access · ${esc(s.name)}</h3><label>Guardian relationship</label><select id="ga1">${['Father / Primary Guardian','Mother / Primary Guardian','Guardian'].map(o=>`<option ${s.rel===o?'selected':''}>${o}</option>`).join('')}</select><label>House / section</label><input id="ga2" value="${esc(s.house||'')}"><label>Photograph</label><input id="ga3" type="file" accept="image/*"><label>Guardian PIN (4–8 digits, leave blank to keep)</label><input id="ga4" type="password" inputmode="numeric"><label>Student PIN (optional)</label><input id="ga5" type="password" inputmode="numeric"><label>CCTV stream URL (https HLS or rtsp)</label><input id="ga6" value="${esc(s.camUrl||'')}"><p class="text-xs mu">The stream address is sealed with AES-256-GCM using the guardian PIN. Re-enter the PIN when you change it.</p><label>Fee items (Tuition:2000, Hostel:1500, Food:800, Library:200)</label><input id="ga7" value="${esc(s.fitems||'')}"><label>Teacher rating (0–5)</label><input id="ga8" type="number" min="0" max="5" value="${+s.rate||0}"><hr class="my-3 border-white/10"><label>Attendance exception · date</label><input id="ga9" type="date" value="${today()}"><label>Status</label><select id="gaa"><option value="">None</option><option value="L">Late arrival</option><option value="V">Approved leave / holiday</option><option value="A">Absent (unexcused)</option><option value="P">Present</option></select><label>Check-in time</label><input id="gab" type="time"><label>Teacher note</label><input id="gac" maxlength="200"><button class="btn pri w-full mt-4" onclick="gaSave('${esc(id)}')">Save</button>`)};
 window.gaSave=async id=>{if(!adm())return;const s=sT(id),x=w(),v=i=>($('#'+i)||{}).value||'',url=v('ga6').trim(),pg=v('ga4'),ps=v('ga5');
  if([v('ga1'),v('ga2'),url,v('ga7'),v('gac')].some(bad))return;
@@ -1592,7 +1761,7 @@ const s0=window.wst;window.wst=async function(n,d){if(d>0){const r=$('#mbox');cl
 if(n===1){const nm=g('wn'),u=g('wu'),z=g('ws');if(nm.length<2||/^\d+$/.test(nm))er.push(['wn','Enter the institution name (at least 2 letters)']);else fix('wn');
 if(!u)er.push(['wu','Subdomain is required']);else if(u!==u.toLowerCase()||!/^[a-z0-9](?:[a-z0-9-]{1,28}[a-z0-9])$/.test(u))er.push(['wu','Use 3–30 lowercase letters, numbers or hyphens (no start/end hyphen)']);else if(RES.includes(u))er.push(['wu','This subdomain is reserved']);else{const r=await subChk(u);if(r==='taken')er.push(['wu','That subdomain is already taken']);else if(r==='invalid')er.push(['wu','This subdomain is not allowed']);else if(r==='err')er.push(['wu','Could not verify availability with the server. Check your connection and try again.']);else fix('wu')}
 if(!/^\d+$/.test(z)||+z<1||+z>1000000)er.push(['ws','Enter a valid number of students and staff']);else fix('ws')}
-if(n===2){[['wb','building'],['wr','street'],['wa','area'],['wc','city']].forEach(([i,l])=>{g(i).length<2?er.push([i,'Enter the '+l]):fix(i)});const c=CM.get(g('wk').toLowerCase());if(!c)er.push(['wk','Please select a valid country']);else{$('#wk').value=c[0];fix('wk')}}
+if(n===2){['wb','wr','wa'].forEach(i=>{const e=$('#'+i);if(e)e.classList.remove('cs-err','cs-ok')});g('wc').length<2?er.push(['wc','Enter the city']):fix('wc');const c=CM.get(g('wk').toLowerCase());if(!c)er.push(['wk','Please select a valid country']);else{$('#wk').value=c[0];fix('wk')}}
 if(n===3){if(g('we').length<2)er.push(['we','Enter the administrator’s full name']);else fix('we');const p=phone(g('wh'),P.w.wk);if(p.e)er.push(['wh',p.e]);else{$('#wh').value=p.v;fix('wh')}
 if(!/^[^@\s]+@[^@\s]+\.[A-Za-z]{2,}$/.test(g('wm')))er.push(['wm','Enter a valid email address']);else fix('wm');
 const pw=$('#wp').value;if(pw.length<8||!/[A-Za-z]/.test(pw)||!/\d/.test(pw))er.push(['wp','Use 8+ characters with letters and numbers']);else fix('wp')}
@@ -2303,5 +2472,339 @@ window.csProfile={get:()=>P,terms:()=>EN[P]};
 function boot(){obs=new MutationObserver(sched);run()}
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',boot);else boot();
 })();
+</script>
+<style id="cs-v9-css">
+/* ===== ClasSphera v9 UI patch (additive overrides) ===== */
+/* 1 · dashboard stat cards: the modal close-button rule (.mx) leaked onto the cards; neutralise it */
+#app .grid:has(>.mx.mbox){display:grid;grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:.75rem;width:100%}
+@media(max-width:340px){#app .grid:has(>.mx.mbox){grid-template-columns:minmax(0,1fr)!important}}
+#app .mx.mbox{position:relative!important;float:none!important;top:auto!important;width:auto!important;height:auto!important;min-width:0!important;max-width:100%;min-height:96px!important;margin:0!important;display:flex!important;flex-direction:column;justify-content:center;align-items:flex-start;place-items:unset;gap:.3rem;padding:.95rem 1rem .95rem 1.1rem!important;border-radius:18px!important;overflow:hidden;text-align:start;font-size:1rem;font-weight:400;line-height:1.3;box-sizing:border-box}
+#app .mx.mbox .k{font-size:.8rem!important;line-height:1.3;max-width:100%;overflow-wrap:anywhere}
+#app .mx.mbox .v{font-size:clamp(1.05rem,5vw,1.5rem)!important;margin-top:0!important;line-height:1.2;max-width:100%;overflow-wrap:anywhere;word-break:break-word}
+/* 2 · modal: close button top-right, mobile-safe padding, copy buttons */
+#modal{padding:calc(72px + env(safe-area-inset-top,0px)) 14px calc(20px + env(safe-area-inset-bottom,0px))!important;box-sizing:border-box}
+#mbox{width:100%;max-width:560px;box-sizing:border-box;max-height:calc(100vh - 110px)!important;max-height:calc(100dvh - 110px)!important;padding:3.5rem 1.2rem 1.4rem!important;overflow-x:hidden;overflow-wrap:anywhere}
+@media(max-width:420px){#modal{padding-inline:12px!important}#mbox{padding:3.4rem .95rem 1.2rem!important}#mbox .cs-pin b{font-size:1.6rem;letter-spacing:.3em;padding-left:.3em}}
+#mbox>.mx{position:absolute!important;top:.65rem;right:.65rem;float:none!important;margin:0!important;width:2.2rem!important;height:2.2rem!important;font-size:1rem;z-index:6}
+#mbox .cs9-cpbox{position:relative;padding-right:3.2rem!important;padding-left:3.2rem!important}
+#mbox .cs-pin.cs9-cpbox{padding-right:3.2rem!important;padding-left:3.2rem!important}
+#mbox .glass.tracking-widest{font-size:clamp(1rem,5.4vw,1.25rem)!important;letter-spacing:.08em}
+.cs9-cp{position:absolute;top:50%;right:.55rem;transform:translateY(-50%);width:2.15rem;height:2.15rem;border-radius:10px;display:grid;place-items:center;padding:0;cursor:pointer;color:#cfe6ff;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.22);transition:.15s}
+.cs9-cp:hover{background:rgba(52,211,153,.18);border-color:#34d399}
+.cs9-cp svg{width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.cs9-cp .ok{display:none}
+.cs9-cp.done{color:#34d399;border-color:#34d399;background:rgba(52,211,153,.16)}
+.cs9-cp.done .cp{display:none}.cs9-cp.done .ok{display:block}
+.cs9-cp.done::after{content:"Copied!";position:absolute;right:0;bottom:calc(100% + 6px);white-space:nowrap;font-size:.72rem;font-weight:700;letter-spacing:0;padding:.28rem .55rem;border-radius:8px;background:#34d399;color:#04141c;pointer-events:none}
+/* 4 · messages list: no outer card, clean search focus */
+body .igp{background:none!important;border:0!important;box-shadow:none!important;border-radius:0!important;padding:.25rem 0 1rem!important}
+.igs{transition:border-color .15s,box-shadow .15s}
+.igs:focus-within{border-color:#34d399;box-shadow:0 0 0 3px rgba(52,211,153,.18)}
+.igs input,.igs input:focus,.igs input:focus-visible,.igs input:active{outline:0!important;border:0!important;box-shadow:none!important;background:transparent!important;-webkit-appearance:none;appearance:none;border-radius:0!important}
+.igs input::-webkit-search-decoration,.igs input::-webkit-search-cancel-button{-webkit-appearance:none;display:none}
+.igp .ibt{cursor:pointer;transition:.15s}.igp .ibt:hover,.igp .ibt:focus-visible{background:#ffffff26;outline:0}
+/* profile overlay (glass) */
+#cs9-prof{position:fixed;inset:0;z-index:10045;display:none;align-items:center;justify-content:center;padding:calc(20px + env(safe-area-inset-top,0px)) 14px calc(20px + env(safe-area-inset-bottom,0px));background:rgba(7,10,28,.45);-webkit-backdrop-filter:blur(18px) saturate(140%)!important;backdrop-filter:blur(18px) saturate(140%)!important;overscroll-behavior:contain}
+#cs9-prof.open{display:flex}
+#cs9-prof .pc{position:relative;width:100%;max-width:420px;max-height:100%;overflow:auto;box-sizing:border-box;padding:1.4rem 1.2rem 1.3rem;border-radius:24px;color:#fff;background:linear-gradient(160deg,rgba(255,255,255,.14),rgba(255,255,255,.05));border:1px solid rgba(255,255,255,.22);box-shadow:0 24px 70px rgba(0,0,0,.45),inset 0 1px 0 rgba(255,255,255,.18);-webkit-backdrop-filter:blur(14px)!important;backdrop-filter:blur(14px)!important}
+#cs9-prof .px{position:absolute;top:.7rem;right:.7rem;width:2.2rem;height:2.2rem;border-radius:50%;display:grid;place-items:center;cursor:pointer;color:#fff;font-size:1rem;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.25)}
+#cs9-prof h3{font-size:1.15rem;font-weight:800;color:#fff!important;text-align:center;margin:0 0 1rem}
+#cs9-prof .pav{width:104px;height:104px;border-radius:50%;margin:0 auto .6rem;display:grid;place-items:center;font-size:2.6rem;font-weight:800;color:#fff;background:linear-gradient(135deg,#7c3aed,#06b6d4) center/cover no-repeat;border:3px solid rgba(255,255,255,.35);box-shadow:0 0 0 4px rgba(255,255,255,.06),0 10px 30px rgba(0,0,0,.4)}
+#cs9-prof .prow{display:flex;gap:.5rem;justify-content:center;flex-wrap:wrap;margin-bottom:.9rem}
+#cs9-prof .pb{padding:.5rem .9rem;border-radius:999px;font-size:.82rem;font-weight:700;cursor:pointer;color:#fff;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.28);font-family:inherit}
+#cs9-prof .pb.m{background:linear-gradient(135deg,#06b6d4,#34d399);color:#04141c;border:0}
+#cs9-prof label{display:block;font-size:.78rem;font-weight:600;color:#c7d2fe!important;margin:.8rem 0 .3rem}
+#cs9-prof input[type=text]{width:100%;box-sizing:border-box;padding:.75rem .9rem;border-radius:14px;font-size:1rem;color:#fff!important;background:rgba(255,255,255,.1)!important;border:1px solid rgba(255,255,255,.25)!important;outline:0}
+#cs9-prof input[type=text]:focus{border-color:#34d399!important;box-shadow:0 0 0 3px rgba(52,211,153,.2)!important}
+#cs9-prof input[disabled]{opacity:.65}
+#cs9-prof .pf{display:flex;gap:.5rem;margin-top:1.2rem}#cs9-prof .pf .pb{flex:1;padding:.75rem}
+/* 5 · chat: full-focus view */
+body.cs9-chat #foot{display:none!important}
+body.cs9-chat #back{display:none!important}
+body.cs9-chat main#app{padding-top:.5rem!important;padding-bottom:0!important}
+body.cs9-chat .igr{background:none!important;border:0!important;box-shadow:none!important;border-radius:0!important;padding:0!important;display:flex;flex-direction:column;overflow:hidden;height:calc(100vh - 90px);height:calc(100dvh - 90px)}
+body.cs9-chat .igr .chd{flex:none;border-radius:16px;margin-bottom:.4rem}
+body.cs9-chat .igr .mback{display:inline-flex!important}
+body.cs9-chat .igr .cbody{flex:1 1 auto;min-height:0!important;max-height:none!important;border-radius:16px;background-color:rgba(255,255,255,.02);background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='260' height='260' viewBox='0 0 260 260'><g fill='none' stroke='%23a5b4fc' stroke-opacity='.16' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'><g transform='translate(14 16) rotate(-8)'><rect x='0' y='0' width='26' height='34' rx='3'/><path d='M7 0v34M12 10h9M12 16h9M12 22h6'/></g><g transform='translate(120 8) rotate(35)'><path d='M0 30L4 18 24 -2a3 3 0 0 1 4 4L8 26z'/><path d='M4 18l6 6M0 30l4-2'/></g><g transform='translate(176 22) rotate(6)'><path d='M6 0h24a6 6 0 0 1 6 6v13a6 6 0 0 1-6 6H16l-8 7v-7H6a6 6 0 0 1-6-6V6a6 6 0 0 1 6-6z'/><path d='M9 9h18M9 15h11'/></g><g transform='translate(20 112) rotate(-14)'><path d='M0 4c6-3 12-3 18 1v24c-6-4-12-4-18-1zM36 4c-6-3-12-3-18 1v24c6-4 12-4 18-1z'/></g><g transform='translate(104 98) rotate(0)'><path d='M18 0L36 9 18 18 0 9zM8 14v9c6 6 14 6 20 0v-9M36 9v12'/></g><g transform='translate(188 120) rotate(-30)'><path d='M0 28l2-9L20 1a3 3 0 0 1 4 4L6 23zM16 5l4 4'/></g><g transform='translate(34 200) rotate(10)'><path d='M12 0a10 10 0 0 0-6 18v5h12v-5A10 10 0 0 0 12 0zM7 27h10M9 31h6'/></g><g transform='translate(100 190) rotate(0)'><path d='M10 0l2.6 7.4L20 10l-7.4 2.6L10 20l-2.6-7.4L0 10l7.4-2.6z'/></g><g transform='translate(150 206) rotate(-12)'><rect x='0' y='0' width='40' height='11' rx='2'/><path d='M7 0v5M14 0v7M21 0v5M28 0v7M35 0v5'/></g><g transform='translate(222 70) rotate(0)'><path d='M10 0l2.6 7.4L20 10l-7.4 2.6L10 20l-2.6-7.4L0 10l7.4-2.6z'/></g><g transform='translate(228 196) rotate(18)'><path d='M6 0h24a6 6 0 0 1 6 6v13a6 6 0 0 1-6 6H16l-8 7v-7H6a6 6 0 0 1-6-6V6a6 6 0 0 1 6-6z'/><path d='M9 9h18M9 15h11'/></g></g></svg>");background-size:260px 260px;background-repeat:repeat}
+body.cs9-chat .igr .cin.cs9-cin{flex:none;display:block;border:0!important;padding:.55rem 0 calc(.35rem + env(safe-area-inset-bottom,0px))!important;background:none!important}
+.cs9-box{border-radius:22px;background:rgba(20,26,58,.92);border:1px solid rgba(255,255,255,.16);padding:.7rem .8rem .55rem;box-shadow:0 8px 30px rgba(0,0,0,.35);transition:border-color .15s,box-shadow .15s}
+.cs9-box:focus-within{border-color:rgba(52,211,153,.55);box-shadow:0 8px 30px rgba(0,0,0,.35),0 0 0 3px rgba(52,211,153,.12)}
+.igr .cin .cs9-box input#cm{display:block;width:100%;box-sizing:border-box;padding:.35rem .25rem .6rem!important;margin:0;font-size:1rem;color:#fff!important;background:transparent!important;border:0!important;border-radius:0!important;box-shadow:none!important;outline:0!important}
+.igr .cin .cs9-box input#cm::placeholder{color:#8e98c4}
+.cs9-row{display:flex;align-items:center;gap:.5rem}.cs9-sp{flex:1}
+.cs9-ic{width:38px;height:38px;border-radius:50%;display:grid;place-items:center;padding:0;cursor:pointer;color:#c7d2fe;background:transparent;border:0;flex:none}
+.cs9-ic:hover{background:rgba(255,255,255,.1)}
+.cs9-ic.rec{color:#f87171;background:rgba(248,113,113,.15)}
+.cs9-ic svg,.cs9-send svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.cs9-send{width:40px;height:40px;border-radius:50%;display:grid;place-items:center;padding:0;cursor:pointer;flex:none;border:0;color:#03140e;background:#34d399;box-shadow:0 0 0 3px rgba(52,211,153,.18),0 0 22px rgba(52,211,153,.65)}
+.cs9-send:active{transform:scale(.94)}.cs9-send svg{stroke-width:2.6}
+
+/* ===== v10 · Add student button + tighter student pages ===== */
+#app button[onclick="stuForm()"]{background:#000!important;background-image:none!important;color:#fff!important;border:1px solid rgba(255,255,255,.4)!important;box-shadow:none!important;font-weight:700}
+#app button[onclick="stuForm()"]:hover{background:#111!important;border-color:rgba(255,255,255,.7)!important}
+@media(max-width:767px){
+ body.cs9-stu main#app{padding-left:8px!important;padding-right:8px!important}
+ body.cs9-stu #app .glass.scroll td,body.cs9-stu #app .glass.scroll th{padding-left:.55rem;padding-right:.55rem}
+ body.cs9-stu #app .glass.p-5{padding:1rem .85rem}
+ body.cs9-stu #app .glass.p-3{padding:.7rem .6rem}
+}
+/* locked STU- prefix */
+.cs9-pfx{display:flex;align-items:center;width:100%;box-sizing:border-box;border-radius:12px;background:rgba(15,23,42,.8);border:1px solid rgba(6,182,212,.3);transition:border-color .15s,box-shadow .15s;cursor:text}
+.cs9-pfx:focus-within{border-color:#06b6d4;box-shadow:0 0 0 3px rgba(6,182,212,.22)}
+.cs9-pfx span{flex:none;padding:0 .1rem 0 1rem;font-weight:800;letter-spacing:.04em;color:#34d399;user-select:none;-webkit-user-select:none;pointer-events:none}
+.cs9-pfx input,.cs9-pfx input:focus{flex:1;min-width:0;width:auto!important;background:transparent!important;border:0!important;box-shadow:none!important;outline:0!important;border-radius:0!important;padding-left:.15rem!important}
+.cs9-pfx:has(.cs-err){border-color:#ff4d6d;box-shadow:0 0 0 3px rgba(255,77,109,.22)}
+
+/* ===== v11 · workspace sidebar stays closed on laptop/desktop; the menu drawer opens on demand ===== */
+#app aside.w-60{display:none!important}
+
+/* ===== v12 · profile copy button + Secret PIN box ===== */
+.cs9-nrow{display:flex;align-items:center;justify-content:space-between;gap:.6rem;flex-wrap:wrap}
+.cs9-nrow h3{min-width:0;overflow-wrap:anywhere}
+.cs9-cpy{display:inline-flex;align-items:center;gap:.4rem;padding:.5rem .85rem;border-radius:12px;cursor:pointer;font-family:inherit;font-size:.9rem;font-weight:700;color:#fff;background:#2563eb;border:1px solid #60a5fa;box-shadow:0 4px 16px rgba(37,99,235,.45);transition:.15s;flex:none}
+.cs9-cpy:hover{background:#1d4ed8}.cs9-cpy svg{width:18px;height:18px;fill:none;stroke:#fff;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.cs9-cpy.done{background:#16a34a;border-color:#4ade80;box-shadow:0 4px 16px rgba(22,163,74,.4)}
+#cs9-spin .cs9-code{margin:.7rem 0;padding:.9rem 1rem;border-radius:14px;text-align:center;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-weight:800;font-size:clamp(1rem,5.2vw,1.35rem);letter-spacing:.08em;color:#34d399;background:rgba(52,211,153,.08);border:1px solid rgba(52,211,153,.35);overflow-wrap:anywhere;user-select:all}
+#cs9-spin .cs9-spb{display:flex;gap:.5rem;flex-wrap:wrap;margin-top:.7rem}
+
+</style>
+<script id="cs-v9-js">
+/* ClasSphera v9 UI patch: additive behaviour layer */
+(()=>{
+const q=(s,r=document)=>r.querySelector(s),qa=(s,r=document)=>[...r.querySelectorAll(s)];
+const tst=m=>{try{toast(m)}catch(e){}};
+const key=n=>'cs9_'+n+'_'+(((typeof S!=='undefined'&&S.user&&S.user.email)||'me'));
+const lget=k=>{try{return localStorage.getItem(k)||''}catch(e){return ''}};
+const lset=(k,v)=>{try{v?localStorage.setItem(k,v):localStorage.removeItem(k)}catch(e){}};
+const isDash=()=>typeof S!=='undefined'&&S.view==='dash'&&!!S.user;
+
+/* ---- 2 · copy buttons inside the credential boxes ---- */
+const COPY='<svg class="cp" viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2.5"/><path d="M5 15V6a2 2 0 0 1 2-2h9"/></svg><svg class="ok" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7"/></svg>';
+function copyText(t){
+ if(navigator.clipboard&&window.isSecureContext)return navigator.clipboard.writeText(t);
+ return new Promise((ok,no)=>{try{const a=document.createElement('textarea');a.value=t;a.setAttribute('readonly','');a.style.cssText='position:fixed;top:0;left:0;opacity:0';document.body.appendChild(a);a.select();a.setSelectionRange(0,t.length);const r=document.execCommand('copy');a.remove();r?ok():no()}catch(e){no(e)}});
+}
+function addCopy(box,val,label){
+ if(!box||box.dataset.cs9cp)return;val=String(val||'').trim();if(!val)return;
+ box.dataset.cs9cp='1';box.classList.add('cs9-cpbox');
+ const b=document.createElement('button');b.type='button';b.className='cs9-cp';b.setAttribute('aria-label','Copy '+label);b.innerHTML=COPY;
+ b.addEventListener('click',e=>{e.preventDefault();e.stopPropagation();
+  copyText(val).then(()=>{b.classList.add('done');clearTimeout(b._t);b._t=setTimeout(()=>b.classList.remove('done'),1700)}).catch(()=>tst('Could not copy. Press and hold the text to copy it.'))});
+ box.appendChild(b);
+}
+function enhanceModal(){
+ const m=q('#mbox');if(!m)return;
+ qa('.cs-pin',m).forEach(b=>addCopy(b,(q('b',b)||{}).textContent,'Master Recovery PIN'));
+ qa('.glass.tracking-widest',m).forEach(b=>{if(!b.dataset.cs9cp){const ok=b.classList.contains('ok');addCopy(b,b.textContent,ok?'recovery code':'sovereign ID')}});
+}
+try{const m=q('#mbox');if(m)new MutationObserver(enhanceModal).observe(m,{childList:true})}catch(e){}
+
+/* ---- 4 · profile overlay (pencil icon on the Messages header) ---- */
+const AV=()=>lget(key('av')),letter=()=>(((S.user&&S.user.name)||'?').trim()[0]||'?').toUpperCase();
+let ov=null;
+function paintAv(el){const a=AV();if(a){el.style.backgroundImage='url("'+a+'")';el.textContent=''}else{el.style.backgroundImage='';el.textContent=letter()}}
+function closeProf(){if(ov)ov.classList.remove('open');document.documentElement.style.overflow='';sync()}
+function openProf(){
+ if(!isDash())return;
+ if(!ov){ov=document.createElement('div');ov.id='cs9-prof';ov.setAttribute('role','dialog');ov.setAttribute('aria-modal','true');ov.setAttribute('aria-label','Edit profile');document.body.appendChild(ov);
+  ov.addEventListener('click',e=>{if(e.target===ov)closeProf()});
+  document.addEventListener('keydown',e=>{if(e.key==='Escape'&&ov.classList.contains('open'))closeProf()})}
+ const u=S.user||{},ws=(typeof w==='function'&&S.ws)?w():null;
+ ov.innerHTML='<div class="pc"><button type="button" class="px" aria-label="Close">✕</button><h3>Your profile</h3><div class="pav" id="cs9pav"></div><div class="prow"><button type="button" class="pb m" id="cs9up">Upload photo</button><button type="button" class="pb" id="cs9rm">Remove</button></div><input type="file" id="cs9file" accept="image/*" hidden><label for="cs9n">Display name</label><input type="text" id="cs9n" maxlength="60" autocomplete="name"><label for="cs9a">About</label><input type="text" id="cs9a" maxlength="120" placeholder="Hey there! I am using ClasSphera"><label>Role</label><input type="text" id="cs9r" disabled><label>Email or login</label><input type="text" id="cs9e" disabled><label>Secure ID</label><input type="text" id="cs9i" disabled><div class="pf"><button type="button" class="pb" id="cs9c">Cancel</button><button type="button" class="pb m" id="cs9s">Save</button></div></div>';
+ const $i=id=>q('#'+id,ov);
+ $i('cs9n').value=u.name||'';$i('cs9a').value=lget(key('ab'));$i('cs9r').value=u.role||'';$i('cs9e').value=u.email||'';$i('cs9i').value=(ws&&ws.id)||'';
+ let pend=AV();const av=$i('cs9pav');
+ const draw=()=>{if(pend){av.style.backgroundImage='url("'+pend+'")';av.textContent=''}else{av.style.backgroundImage='';av.textContent=((($i('cs9n').value||u.name||'?').trim()[0])||'?').toUpperCase()}};draw();
+ q('.px',ov).onclick=closeProf;$i('cs9c').onclick=closeProf;
+ $i('cs9up').onclick=()=>$i('cs9file').click();
+ $i('cs9rm').onclick=()=>{pend='';draw()};
+ $i('cs9file').onchange=e=>{const f=e.target.files&&e.target.files[0];if(!f)return;
+  if(!/^image\//.test(f.type))return tst('Choose an image file');if(f.size>12*1024*1024)return tst('Image is too large (max 12 MB)');
+  const r=new FileReader();r.onload=()=>{const im=new Image();im.onload=()=>{try{const s=Math.min(im.width,im.height),c=document.createElement('canvas');c.width=c.height=256;c.getContext('2d').drawImage(im,(im.width-s)/2,(im.height-s)/2,s,s,0,0,256,256);pend=c.toDataURL('image/jpeg',.86);draw()}catch(x){tst('Could not read that image')}};im.onerror=()=>tst('Could not read that image');im.src=r.result};r.onerror=()=>tst('Could not read that image');r.readAsDataURL(f)};
+ $i('cs9s').onclick=()=>{
+  const nm=$i('cs9n').value.trim(),ab=$i('cs9a').value.trim();
+  if(!nm)return tst('Enter your name');
+  try{if(typeof bad==='function'&&(bad(nm)||bad(ab)))return}catch(e){}
+  lset(key('av'),pend);lset(key('ab'),ab);
+  if(nm!==u.name){try{S.user.name=nm;const m=ws&&(ws.users||[]).find(x=>x.email===u.email);if(m)m.name=nm;if(typeof save==='function')save()}catch(e){}}
+  ov.classList.remove('open');document.documentElement.style.overflow='';
+  try{render()}catch(e){sync()}tst('Profile saved')};
+ ov.classList.add('open');document.documentElement.style.overflow='hidden';setTimeout(()=>$i('cs9n').focus({preventScroll:true}),60);
+}
+document.addEventListener('click',e=>{const t=e.target.closest&&e.target.closest('#app .igt .ibt');if(t){e.preventDefault();openProf()}});
+document.addEventListener('keydown',e=>{if((e.key==='Enter'||e.key===' ')&&e.target.matches&&e.target.matches('#app .igt .ibt')){e.preventDefault();openProf()}});
+
+/* ---- sync after every render ---- */
+const ARROW='<svg viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7"/></svg>';
+function fit(){const g=q('#app .igr');if(!g||!document.body.classList.contains('cs9-chat'))return;const t=g.getBoundingClientRect().top+scrollY;g.style.height=Math.max(320,innerHeight-t-8)+'px'}
+function chatBox(){
+ const cin=q('#app .igr .cin');if(!cin||cin.dataset.cs9)return;cin.dataset.cs9='1';cin.classList.add('cs9-cin');
+ const inp=q('#cm',cin),att=q('label',cin),mic=q('#mic',cin),snd=q('button.pri',cin);if(!inp||!snd)return;
+ const box=document.createElement('div');box.className='cs9-box';const row=document.createElement('div');row.className='cs9-row';
+ const sp=document.createElement('span');sp.className='cs9-sp';
+ if(att){att.className='cs9-ic';att.setAttribute('aria-label','Attach file or image');const f=q('input[type=file]',att);if(f)f.accept='image/*,video/*,audio/*,application/pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.zip'}
+ if(mic)mic.className='cs9-ic';
+ snd.className='cs9-send';snd.innerHTML=ARROW;snd.setAttribute('aria-label','Send');snd.title='Send';
+ [att,sp,mic,snd].forEach(x=>x&&row.appendChild(x));box.append(inp,row);
+ [...cin.children].forEach(c=>{if(c!==box)c.remove()});cin.appendChild(box);
+ /* the chat box never carries a "Quick" dropdown */
+ qa('.igr select,.igr [data-quick],.igr .quick').forEach(x=>x.remove());
+ qa('.igr button').forEach(b=>{if(/^\s*quick\b/i.test(b.textContent))b.remove()});
+}
+function sync(){
+ try{
+  const dash=isDash(),home=dash&&S.tab==='overview',chat=dash&&S.tab==='chat'&&!!q('#app .igr');
+  document.body.classList.toggle('cs9-home',!!home);document.body.classList.toggle('cs9-chat',!!chat);document.body.classList.toggle('cs9-stu',!!(dash&&S.tab==='students'));
+  /* 3 · admin info card and Plans & Pricing only on the main dashboard */
+  if(dash&&!home){qa('#app .idb').forEach(e=>e.remove());const p=q('#plans');if(p)p.remove()}
+  /* 5 · chat */
+  if(chat){const b=q('#back');if(b)b.hidden=true;chatBox();if(window.vrUI)vrUI();
+   const wasChat=sync.c;if(!wasChat)scrollTo(0,0);requestAnimationFrame(()=>{fit();const cb=q('#cb');if(cb&&!wasChat)cb.scrollTop=cb.scrollHeight})}
+  sync.c=chat;
+  /* 4 · pencil icon + avatar photo */
+  const pe=q('#app .igt .ibt');if(pe&&!pe.dataset.cs9){pe.dataset.cs9='1';pe.setAttribute('role','button');pe.tabIndex=0;pe.setAttribute('aria-label','Edit profile')}
+  const me=q('#app .stories .st:first-child .av'),a=AV();if(me&&a){const b=q('b',me);if(b){b.style.cssText='background:url("'+a+'") center/cover no-repeat;color:transparent'}}
+  enhanceModal();
+ }catch(e){}
+ try{lockGid()}catch(e){}
+ try{attLabel()}catch(e){}
+ try{stuDetail()}catch(e){}
+ try{fixPin()}catch(e){}
+}
+const r9=render;render=function(){r9.apply(this,arguments);sync()};
+/* the Plans link in the drawer must still reach the plans: go to the main dashboard first */
+if(typeof window.gPlans==='function'){const g0=window.gPlans;window.gPlans=function(){try{if(S.user&&S.tab!=='overview'){S.tab='overview';S.sid=null}}catch(e){}return g0.apply(this,arguments)}}
+addEventListener('resize',()=>fit());
+if(window.visualViewport)visualViewport.addEventListener('resize',()=>fit());
+
+
+
+/* ===== v12 · student Secret PIN, profile copy button, PIN sign-in input ===== */
+const B32='0123456789ABCDEFGHJKMNPQRSTVWXYZ';
+const b32=u=>{let bits=0,val=0,o='';for(const b of u){val=((val<<8)|b)&0xFFFFF;bits+=8;while(bits>=5){o+=B32[(val>>>(bits-5))&31];bits-=5;val&=(1<<bits)-1}}if(bits>0)o+=B32[(val<<(5-bits))&31];return o};
+const sha2=async s=>[...new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(s)))].map(b=>b.toString(16).padStart(2,'0')).join('');
+const rnd=n=>[...crypto.getRandomValues(new Uint8Array(n))].map(b=>b.toString(16).padStart(2,'0')).join('');
+/* 80 random bits + a 20-bit tag bound to institution ID + student ID  ->  XXXX-XXXX-XXXX-XXXX-XXXX */
+async function mkSecret(x,sid){
+ for(let k=0;k<20;k++){
+  const r=b32(crypto.getRandomValues(new Uint8Array(10))).slice(0,16);
+  const h=await sha2((x.id||'')+':'+sid+':'+r+':'+(crypto.randomUUID?crypto.randomUUID():rnd(16)));
+  const tag=b32(new Uint8Array([parseInt(h.slice(0,2),16),parseInt(h.slice(2,4),16),parseInt(h.slice(4,6),16)])).slice(0,4);
+  const code=(r+tag).match(/.{4}/g).join('-');
+  if(!(x.students||[]).some(s=>s.sp===code))return code;
+ }
+ throw new Error('Could not generate a unique PIN');
+}
+const pendSp=new Set();
+async function giveSecret(s,x,pub){
+ if(!s||pendSp.has(s.id))return;pendSp.add(s.id);
+ try{
+  const code=await mkSecret(x,s.id);
+  s.gs=rnd(8);s.gh=await sha2(code+':'+s.gs);s.ss=rnd(8);s.sh=await sha2(code+':'+s.ss);s.sp=code;s.spAt=Date.now();
+  if(typeof save==='function')save();
+  try{render()}catch(e){}
+  if(pub&&typeof window.gaSync==='function')window.gaSync();
+ }catch(e){tst('Could not create the Secret PIN. Try again.')}
+ finally{pendSp.delete(s.id)}
+}
+/* create-time hook: wraps the (already ID-fixing) saveStu */
+if(typeof window.saveStu==='function'){
+ const sv2=window.saveStu;
+ window.saveStu=function(){
+  let x,n0;try{x=w();n0=x.students.length}catch(e){return sv2.apply(this,arguments)}
+  const go=()=>{try{if(x.students.length>n0){const s=x.students[x.students.length-1];if(s&&!s.sp&&!s.gh&&!s.sh)giveSecret(s,x,true)}}catch(e){}};
+  const r=sv2.apply(this,arguments);go();if(r&&typeof r.then==='function')r.then(go);return r;
+ };
+}
+/* copy the whole profile page except the Secret PIN */
+const txt=e=>{const k=e.cloneNode(true);k.querySelectorAll('button,svg,script,style,.bar').forEach(z=>z.remove());return k.textContent.replace(/\s+/g,' ').trim()};
+function profileText(){
+ const out=[];let lab='';
+ const walk=e=>{for(const c of e.children){
+  const t=c.tagName.toUpperCase();
+  if(['BUTTON','SCRIPT','STYLE','SVG'].includes(t)||c.id==='rmk'||c.id==='cs9-spin')continue;
+  if(t==='LABEL'){lab=txt(c);continue}
+  if(t==='INPUT'||t==='SELECT'||t==='TEXTAREA'){if(c.type==='hidden'||c.type==='file')continue;const v=t==='SELECT'?((c.options[c.selectedIndex]||{}).text||''):c.value;out.push((lab?lab+': ':'')+(String(v).trim()||'—'));lab='';continue}
+  if(t==='H3'){out.push('');out.push(txt(c));continue}
+  if(t==='TABLE'){c.querySelectorAll('tr').forEach(r=>out.push([...r.children].map(txt).join(' | ')));continue}
+  if(c.querySelector('label,input,select,textarea,h3,p,table')){walk(c);continue}
+  const s=txt(c);if(s)out.push(s)}};
+ const sec=q('#app section');if(!sec)return '';
+ qa('.glass',sec).filter(c=>c.id!=='cs9-spin'&&!(c.parentElement&&c.parentElement.closest('.glass'))).forEach(c=>{out.push('');walk(c)});
+ return out.join('\n').replace(/\n{3,}/g,'\n\n').trim();
+}
+const CPY='<svg viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2.5"/><path d="M5 15V6a2 2 0 0 1 2-2h9"/></svg>';
+function stuDetail(){
+ if(!isDash()||S.tab!=='students'||!S.sid)return;
+ const h=q('#app section h3.text-xl');
+ if(h&&!h.dataset.cs9c){h.dataset.cs9c='1';
+  const row=document.createElement('div');row.className='cs9-nrow';h.parentNode.insertBefore(row,h);row.appendChild(h);
+  const b=document.createElement('button');b.type='button';b.className='cs9-cpy';b.setAttribute('aria-label','Copy all student information');b.innerHTML=CPY+'<span>Copy</span>';
+  b.addEventListener('click',()=>{const t=profileText();if(!t)return;copyText(t).then(()=>{b.classList.add('done');b.querySelector('span').textContent='Copied!';clearTimeout(b._t);b._t=setTimeout(()=>{b.classList.remove('done');b.querySelector('span').textContent='Copy'},1700)}).catch(()=>tst('Could not copy. Try again.'))});
+  row.appendChild(b)}
+ /* Secret PIN box, bottom of the page, administrators only */
+ const sec=q('#app section');if(!sec||q('#cs9-spin',sec)||!adm())return;
+ let x,s;try{x=w();s=x.students.find(a=>a.id===S.sid)}catch(e){return}if(!s)return;
+ const box=document.createElement('div');box.id='cs9-spin';box.className='glass p-5 mt-4';
+ const hd=document.createElement('h3');hd.className='font-bold mb-2';hd.textContent='Secret PIN';box.appendChild(hd);
+ const note=document.createElement('p');note.className='text-xs mu';box.appendChild(note);
+ const mkBtn=(l,f,c)=>{const b=document.createElement('button');b.type='button';b.className='btn'+(c?' '+c:'');b.textContent=l;b.onclick=f;return b};
+ const btns=document.createElement('div');btns.className='cs9-spb';
+ if(s.sp){
+  const code=document.createElement('div');code.className='cs9-code';code.textContent=s.sp;box.appendChild(code);
+  note.textContent='Unique to this student. The guardian and the student use it as the Secret PIN to sign in. Publish the portals after any change so it works online.';
+  const c=mkBtn('Copy PIN',()=>copyText(s.sp).then(()=>{c.textContent='Copied!';setTimeout(()=>c.textContent='Copy PIN',1600)}).catch(()=>tst('Could not copy')));
+  btns.append(c,mkBtn('Regenerate',()=>{if(confirm('Create a new Secret PIN? The old one will stop working after you publish.'))giveSecret(s,x,true)}),mkBtn('Publish',()=>{if(typeof window.gaSync==='function')window.gaSync()}));
+ }else if(!s.gh&&!s.sh){note.textContent='Creating a unique Secret PIN…';giveSecret(s,x,false)}
+ else{note.textContent='Custom guardian or student PINs are already set for this student. Generate a Secret PIN to replace them.';btns.append(mkBtn('Generate Secret PIN',()=>{if(confirm('Replace the current PINs with a new unique Secret PIN?'+(s.camUrl?' The camera stream must be sealed again under Portal access.':'')))giveSecret(s,x,true)}))}
+ box.insertBefore(note,box.children[1]);if(btns.children.length)box.appendChild(btns);
+ sec.appendChild(box);
+}
+/* sign-in: PIN accepts letters; normalise the pasted/typed Secret PIN */
+function fixPin(){
+ const p=q('#gpn');if(!p||p.dataset.cs9s)return;p.dataset.cs9s='1';
+ p.setAttribute('inputmode','text');p.setAttribute('autocapitalize','characters');p.setAttribute('autocorrect','off');p.setAttribute('spellcheck','false');
+}
+if(typeof window.gLogin==='function'){
+ const gl=window.gLogin;
+ window.gLogin=function(){const p=q('#gpn');if(p){let c=p.value.replace(/[\s-]/g,'').toUpperCase().replace(/O/g,'0').replace(/[IL]/g,'1');if(/^[0-9A-Z]{20}$/.test(c)&&!/[UI]/.test(c))p.value=c.match(/.{4}/g).join('-')}return gl.apply(this,arguments)};
+}
+/* ===== v11 · Attendance staff tab label in Bengali ===== */
+function attLabel(){
+ let bn=false;try{bn=LNG==='bn'}catch(e){}
+ if(!bn)return;
+ qa('#app .chip').forEach(c=>{if((c.getAttribute('onclick')||'').indexOf("S.at='staff'")>-1&&c.textContent.trim()!=='শিক্ষক ও শিক্ষিকা')c.textContent='শিক্ষক ও শিক্ষিকা'});
+}
+/* ===== v10 · plan-based student ID digits ===== */
+const idDigits=()=>{const n=((typeof w==='function'&&w()&&w().plan)||{}).name||'Free';return /^(free|starter)/i.test(n)?3:4};
+const nextStu=x=>{let m=0;(x.students||[]).forEach(s=>{const r=/^STU-(\d+)$/.exec(String(s&&s.id||''));if(r&&+r[1]>m)m=+r[1]});return m+1};
+if(typeof window.saveStu==='function'){
+ const sv=window.saveStu;
+ window.saveStu=function(){
+  let x,n0,dg,nx;
+  try{if(!adm())return sv.apply(this,arguments);x=w();n0=x.students.length;dg=idDigits();nx=nextStu(x)}catch(e){return sv.apply(this,arguments)}
+  if(dg===3&&nx>999)return tst('Student ID limit reached (STU-999). Upgrade your plan under Pricing');
+  const fix=()=>{try{if(x.students.length>n0){const s=x.students[x.students.length-1],id='STU-'+String(nx).padStart(dg,'0');if(s.id!==id){s.id=id;if(typeof save==='function')save();render()}}}catch(e){}};
+  const r=sv.apply(this,arguments);
+  fix();if(r&&typeof r.then==='function')r.then(fix);
+  return r;
+ };
+}
+/* ===== v10 · Guardian / Student form: STU- prefix is locked ===== */
+function lockGid(){
+ const i=q('#gid');if(!i||i.dataset.cs9p)return;i.dataset.cs9p='1';
+ const d=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value');
+ const clean=v=>String(v==null?'':v).replace(/^\s*STU-?/i,'').replace(/\D/g,'').slice(0,4);
+ Object.defineProperty(i,'value',{configurable:true,get(){const v=clean(d.get.call(this));return v?'STU-'+v:''},set(v){d.set.call(this,clean(v))}});
+ i.addEventListener('input',()=>{const c=clean(d.get.call(i));if(c!==d.get.call(i))d.set.call(i,c)});
+ i.setAttribute('inputmode','numeric');i.setAttribute('maxlength','4');i.setAttribute('pattern','[0-9]*');i.setAttribute('placeholder','001');i.setAttribute('aria-label','Student admission ID, number after STU-');i.autocomplete='off';
+ const wrap=document.createElement('div');wrap.className='cs9-pfx';const sp=document.createElement('span');sp.textContent='STU-';sp.setAttribute('aria-hidden','true');
+ i.parentNode.insertBefore(wrap,i);wrap.append(sp,i);
+ wrap.addEventListener('mousedown',e=>{if(e.target!==i){e.preventDefault();i.focus()}});
+}
+try{const app=q('#app');if(app)new MutationObserver(()=>{if(q('#gid:not([data-cs9p])'))lockGid();fixPin()}).observe(app,{childList:true,subtree:true})}catch(e){}
+sync();
+})();
+
 </script>
 </body></html>

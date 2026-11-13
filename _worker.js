@@ -228,7 +228,30 @@ async function mutatePart(env,sub,k,fn){
  throw new Err(409,'Workspace is busy, try again')}
 const hiddenFor=(role,k)=>role!=='Admin'&&(k==='nk'||k==='mp'||k==='rk');
 function redactUsers(raw,ph){try{return JSON.stringify(JSON.parse(raw).map(u=>u&&u.email===ph?u:{name:u.name,email:u.email,role:u.role,mail:u.mail}))}catch{return'[]'}}
-async function conflictResp(env,sub,keys){const rows=await readParts(env,sub,keys),f=[],rv=[];for(const k of keys){const x=rows.get(k);f.push(JSON.stringify(k)+':'+(x&&!x.deleted&&x.raw?x.raw:'null'));rv.push(JSON.stringify(k)+':'+(x?x.rev:0))}return JR('{"error":"conflict","remote":{'+f.join(',')+'},"revs":{'+rv.join(',')+'}}',409)}
+/* ---- chat privacy: a thread is visible and writable only to the people in it ---- */
+const THK=/^[A-Za-z0-9+_.|-]{1,100}$/,THPAV=/^data:image\/[a-z0-9.+-]+;base64,[A-Za-z0-9+\/=]{1,80000}$/i;
+const thParty=(k,arr,me)=>{if(k.indexOf('|')>=0){const p=k.split('|');return p.length===2&&p.includes(me)}return!Array.isArray(arr)||!arr.length||arr.some(m=>m&&m.f===me)};
+function thView(raw,me){try{const t=JSON.parse(raw);if(!t||typeof t!=='object'||Array.isArray(t))return'{}';const o={},keys=[],em=new Set([me]);
+ for(const k of Object.keys(t)){if(k.slice(0,2)==='__'||!Array.isArray(t[k]))continue;if(k.indexOf('|')>=0?thParty(k,null,me):t[k].some(m=>m&&m.f===me)){o[k]=t[k];keys.push(k);k.split('|').forEach(e=>em.add(e))}}
+ const rd={},cl={},pv={};
+ for(const k of keys){const r=t.__rd&&t.__rd[k];if(r&&typeof r==='object')rd[k]=r;const c=t.__clr&&t.__clr[k];if(c&&typeof c==='object'&&c[me]!==undefined)cl[k]={[me]:c[me]}}
+ em.forEach(e=>{if(t.__pav&&typeof t.__pav[e]==='string')pv[e]=t.__pav[e]});
+ o.__rd=rd;o.__clr=cl;o.__pav=pv;return JSON.stringify(o)}catch{return'{}'}}
+async function thMerge(env,sub,inc,me,role){const st=await getJson(env,sub,'th'),S0=st&&typeof st==='object'&&!Array.isArray(st)?st:{};
+ if(!inc||typeof inc!=='object'||Array.isArray(inc)||Object.keys(inc).length>3000)return S0;
+ const out={...S0},ok=[];out.__rd={...(S0.__rd||{})};out.__clr={...(S0.__clr||{})};out.__pav={...(S0.__pav||{})};
+ for(const k of Object.keys(inc)){if(k.slice(0,2)==='__'||!THK.test(k)||!Array.isArray(inc[k]))continue;
+  const sa=Array.isArray(S0[k])?S0[k]:[],ia=inc[k];if(!thParty(k,sa,me)||ia.length>20000)continue;
+  if(!ia.every(m=>m&&typeof m==='object'&&!Array.isArray(m)&&typeof m.f==='string'))continue;
+  if(JSON.stringify(sa.filter(m=>m&&m.f!==me))!==JSON.stringify(ia.filter(m=>m.f!==me)))continue;
+  out[k]=ia.map(m=>m.f===me?{...m,r:role}:m);ok.push(k)}
+ for(const f of['__rd','__clr']){const src=inc[f];if(!src||typeof src!=='object')continue;
+  for(const k of Object.keys(src)){if(!THK.test(k)||!Array.isArray(out[k])||!thParty(k,out[k],me))continue;const v=src[k]&&src[k][me];if(typeof v!=='number'||!isFinite(v))continue;
+   out[f][k]={...(out[f][k]||{}),[me]:Math.max(0,Math.min(out[k].length,Math.floor(v)))}}}
+ const a=inc.__pav&&inc.__pav[me];if(typeof a==='string'&&THPAV.test(a))out.__pav[me]=a;
+ for(const k of ok)for(const f of['__rd','__clr']){const r=out[f][k];if(r&&typeof r==='object')for(const e of Object.keys(r))if(+r[e]>out[k].length)r[e]=out[k].length}
+ return out}
+async function conflictResp(env,sub,keys,ph){const rows=await readParts(env,sub,keys),f=[],rv=[];for(const k of keys){const x=rows.get(k);f.push(JSON.stringify(k)+':'+(x&&!x.deleted&&x.raw?(k==='th'?thView(x.raw,ph):x.raw):'null'));rv.push(JSON.stringify(k)+':'+(x?x.rev:0))}return JR('{"error":"conflict","remote":{'+f.join(',')+'},"revs":{'+rv.join(',')+'}}',409)}
 function checkUsers(us){
  if(!Array.isArray(us)||!us.length||us.length>500)return'users must be a non-empty list';
  const seen=new Set();let adm=0;
@@ -242,7 +265,7 @@ async function findUser(env,sub,phone,mail){const us=await getJson(env,sub,'user
 
 /* role rules for writing sections (denied sections are dropped, never an error, so one stray key cannot block a whole sync) */
 const ADMIN_ONLY=new Set(['users','rk','mp','inst','plan','nk','pub','cctv','cam','xc','board','gin','gth','cur','sn']);
-const NO_DELETE=new Set(['users','inst','led','id','created','students','staff','rk','mp']);
+const NO_DELETE=new Set(['users','inst','led','id','created','students','staff','rk','mp','th']);
 const ROLE_ALLOW={Accountant:new Set(['led','th','xm']),Guardian:new Set(['th']),Supervisor:new Set(['th','xm','sub'])};
 function canWrite(role,k){if(k==='id'||k==='created')return false;if(role==='Admin')return true;if(ROLE_ALLOW[role])return ROLE_ALLOW[role].has(k);if(role==='Teacher')return!ADMIN_ONLY.has(k)&&k!=='led'&&k!=='staff';return false}
 async function confirmedPlan(env,sub){
@@ -375,7 +398,7 @@ async function otpVerify(C){
 async function wsLoad(C){
  const{b,env}=C,s=await need(C);await ensureData(C,s.sub);
  const cr=isO(b.revs)?b.revs:null;
- const pack=(rows,gone)=>{const f=[],rv={};for(const[k,x]of rows){if(x.deleted||!x.raw||hiddenFor(s.role,k))continue;f.push(JSON.stringify(k)+':'+(k==='users'&&s.role!=='Admin'?redactUsers(x.raw,s.ph):x.raw));rv[k]=x.rev}return{f,rv,gone}};
+ const pack=(rows,gone)=>{const f=[],rv={};for(const[k,x]of rows){if(x.deleted||!x.raw||hiddenFor(s.role,k))continue;f.push(JSON.stringify(k)+':'+(k==='users'&&s.role!=='Admin'?redactUsers(x.raw,s.ph):k==='th'?thView(x.raw,s.ph):x.raw));rv[k]=x.rev}return{f,rv,gone}};
  if(!cr){const rows=await readParts(env,s.sub,null);if(!rows.size)throw new Err(404,'workspace not found');const p=pack(rows,[]);return JR('{"ws":{'+p.f.join(',')+'},"revs":'+JSON.stringify(p.rv)+'}')}
  const meta=(await sq(env,'SELECT k,rev,deleted FROM ws_parts WHERE sub=?',s.sub).all()).results||[],live=[],gone=[];
  for(const r of meta){if(hiddenFor(s.role,r.k))continue;const c=cr[r.k];if(r.deleted){if(c!==undefined&&+c!==r.rev)gone.push(r.k)}else if(+c!==r.rev)live.push(r.k)}
@@ -396,11 +419,12 @@ async function wsSave(C){
  if(!Object.keys(P).length&&!D.length)return J({ok:true,revs:{},denied});
  if(P.users!==undefined){const e=checkUsers(P.users);if(e)throw new Err(400,e)}
  if(P.inst!==undefined&&(!isO(P.inst)||str(P.inst.name,120).length<2))throw new Err(400,'Institution name is required');
+ if(P.th!==undefined)P.th=await thMerge(env,s.sub,P.th,s.ph,s.role);
  if(P.plan!==undefined){const cp=await confirmedPlan(env,s.sub);P.plan=cp||(isO(P.plan)?{name:str(P.plan.name,60),gateway:str(P.plan.gateway,30),status:'pending'}:null)}
  const S2={};for(const[k,v]of Object.entries(P)){const t=JSON.stringify(v===undefined?null:v);if(t.length>PART_MAX)throw new Err(413,`Section ${k} is too large`);S2[k]=t}
  const oldUsers=P.users!==undefined?await getJson(env,s.sub,'users'):null;
  const r=await commitParts(env,s.sub,{parts:S2,del:D,revs});
- if(r.conflict){const cur=await partMeta(env,s.sub,[...Object.keys(S2),...D]),cf=[...Object.keys(S2),...D].filter(k=>(cur.get(k)?cur.get(k).rev:0)!==(+revs[k]||0));return conflictResp(env,s.sub,cf.length?cf:r.conflict)}
+ if(r.conflict){const cur=await partMeta(env,s.sub,[...Object.keys(S2),...D]),cf=[...Object.keys(S2),...D].filter(k=>(cur.get(k)?cur.get(k).rev:0)!==(+revs[k]||0));return conflictResp(env,s.sub,cf.length?cf:r.conflict,s.ph)}
  if(P.users!==undefined){
   await env.DB.batch(idxStmts(env,s.sub,P.users));
   if(Array.isArray(oldUsers)){const nm=new Map(P.users.map(u=>[u.email,u])),t=String(nowS());
@@ -991,7 +1015,7 @@ var f=window.csOtp;if(typeof f==='function'&&String(f).indexOf('/api/g/otp')>-1)
   if(!j||!j.token){O.tries=(O.tries||0)+1;try{threat('OTP mismatch',O.sub)}catch(e){}if(O.tries>=3){S.otp=null;S.lock=Date.now()+60000;closeM();return toast('Too many wrong codes. Locked for a minute.')}return fail('Incorrect code. '+(3-O.tries)+' attempt(s) left')}
   S.otp=null;try{await window.csEnter(O.sub,O.ph,O.em,O.pw,j.token);toast('✅ Verified')}catch(e){closeM();toast((e&&e.error)||'Could not open the workspace. Sign in again.')}}}
 })();</script>`;
-const htmlHeaders=(main,more={})=>({'content-type':'text/html; charset=utf-8','cache-control':'public, max-age=0, must-revalidate','x-content-type-options':'nosniff','x-frame-options':'DENY','referrer-policy':'strict-origin-when-cross-origin','strict-transport-security':'max-age=31536000','permissions-policy':'camera=(), microphone=(), geolocation=()',...(main?{}:{'x-robots-tag':'noindex, nofollow'}),...more});
+const htmlHeaders=(main,more={})=>({'content-type':'text/html; charset=utf-8','cache-control':'public, max-age=0, must-revalidate','x-content-type-options':'nosniff','x-frame-options':'DENY','referrer-policy':'strict-origin-when-cross-origin','strict-transport-security':'max-age=31536000','permissions-policy':'camera=(), microphone=(self), geolocation=()',...(main?{}:{'x-robots-tag':'noindex, nofollow'}),...more});
 const file=(body,type,main,ttl=3600,more={})=>new Response(body,{headers:{'content-type':type+'; charset=utf-8','cache-control':ttl?'public, max-age='+ttl:'no-cache','x-content-type-options':'nosniff',...(main?{}:{'x-robots-tag':'noindex, nofollow'}),...more}});
 const notFound=()=>new Response('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>Page not found | ClasSphera</title><style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#070812;color:#e6e9f5;font-family:Inter,system-ui,sans-serif;text-align:center;padding:1rem}a{color:#34d399}</style></head><body><main><h1>Page not found</h1><p><a href="/">Back to ClasSphera</a></p></main></body></html>',{status:404,headers:htmlHeaders(false,{'cache-control':'no-store'})});
 function tenantSub(host){for(const r of ROOTS){if(host.endsWith('.'+r)){const s=host.slice(0,-(r.length+1));if(SUBRX.test(s)&&!RESERVED.includes(s))return s}}return null}
