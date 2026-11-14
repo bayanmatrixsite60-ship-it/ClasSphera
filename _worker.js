@@ -867,18 +867,26 @@ async function gNotice(C){ /* notice / urgent broadcast to every guardian of the
   await C.env.DB.batch([gSeenSt(C.env,w.sub,w.sid,w.who,'seen',at),gSeenSt(C.env,w.sub,w.sid,w.who,'dv',at)]);return J({ok:true})}
  async function gTyping(C){const w=await gWho(C);if(hitMem('gty:'+w.sub+':'+w.sid+':'+w.who,1500,3600000))return J({ok:true,skipped:true});
   await gSeenSt(C.env,w.sub,w.sid,w.who,'ty',Date.now()).run();return J({ok:true})}
- /* web push (no payload: the service worker shows a generic alert, the app fetches the real message). Needs VAPID_PUBLIC + VAPID_PRIVATE_JWK secrets; without them everything below is a quiet no-op. */
+ /* web push (no payload: the service worker shows a generic alert, the app fetches the real message). Needs VAPID_PUBLIC + VAPID_PRIVATE_JWK (or VAPID_PRIVATE) secrets; without them everything below is a quiet no-op.
+    VAPID_PRIVATE_JWK may hold a full JWK (JSON) or just the raw private key string from vapidkeys.com (43 characters); the JWK is then built from it and VAPID_PUBLIC. */
  const PUSHHOST=/^https:\/\/([a-z0-9-]+\.)*(googleapis\.com|push\.services\.mozilla\.com|notify\.windows\.com|push\.apple\.com)\//i;
- async function vapidJwt(env,aud){const key=await crypto.subtle.importKey('jwk',JSON.parse(env.VAPID_PRIVATE_JWK),{name:'ECDSA',namedCurve:'P-256'},false,['sign']);
+ const vapidPriv=env=>String(env.VAPID_PRIVATE_JWK||env.VAPID_PRIVATE||'').trim(),vapidPub=env=>String(env.VAPID_PUBLIC||'').replace(/\s+/g,'').replace(/^"|"$/g,'');
+ let vapidMemo=null;
+ async function vapidKey(env){const raw=vapidPriv(env),pub=vapidPub(env),sg=raw+'|'+pub;if(vapidMemo&&vapidMemo.sg===sg)return vapidMemo.key;
+  let jwk;if(raw[0]==='{')jwk=JSON.parse(raw);else jwk={kty:'EC',crv:'P-256',d:raw.replace(/\s+/g,'').replace(/^"|"$/g,'')};
+  if(!jwk.x||!jwk.y){const p=unb64u(pub);if(p.length!==65||p[0]!==4)throw new Error('VAPID_PUBLIC must be the 65-byte uncompressed public key');jwk.x=b64u(p.slice(1,33));jwk.y=b64u(p.slice(33))}
+  jwk={kty:'EC',crv:'P-256',x:jwk.x,y:jwk.y,d:jwk.d};
+  const key=await crypto.subtle.importKey('jwk',jwk,{name:'ECDSA',namedCurve:'P-256'},false,['sign']);vapidMemo={sg,key};return key}
+ async function vapidJwt(env,aud){const key=await vapidKey(env);
   const h=b64u(u8(JSON.stringify({typ:'JWT',alg:'ES256'}))),p=b64u(u8(JSON.stringify({aud,exp:nowS()+43200,sub:env.VAPID_SUBJECT||'mailto:admin@classphera.com'})));
   return h+'.'+p+'.'+b64u(await crypto.subtle.sign({name:'ECDSA',hash:'SHA-256'},key,u8(h+'.'+p)))}
- async function pushTo(env,sub,who,sid){try{if(!env.VAPID_PUBLIC||!env.VAPID_PRIVATE_JWK)return;if(hitMem('pu:'+sub+':'+who+':'+sid,40,60000))return;
+ async function pushTo(env,sub,who,sid){try{if(!vapidPub(env)||!vapidPriv(env))return;if(hitMem('pu:'+sub+':'+who+':'+sid,40,60000))return;
   const rows=(await sq(env,'SELECT id,ep FROM push_subs WHERE sub=?1 AND who=?2 AND (?3 IS NULL OR sid=?3) LIMIT 30',sub,who,sid==null?null:String(sid)).all()).results||[],jw={};
   await Promise.all(rows.map(async r=>{if(!PUSHHOST.test(r.ep)){await sq(env,'DELETE FROM push_subs WHERE id=?',r.id).run();return}
    const aud=new URL(r.ep).origin,jwt=jw[aud]||(jw[aud]=await vapidJwt(env,aud));
-   const res=await fetch(r.ep,{method:'POST',headers:{TTL:'86400',Urgency:'high',Authorization:'vapid t='+jwt+', k='+env.VAPID_PUBLIC}});
-   if(res.status===404||res.status===410)await sq(env,'DELETE FROM push_subs WHERE id=?',r.id).run()}))}catch{}}
- async function pushKey(C){return J({key:C.env.VAPID_PUBLIC||'',on:!!(C.env.VAPID_PUBLIC&&C.env.VAPID_PRIVATE_JWK)})}
+   const res=await fetch(r.ep,{method:'POST',headers:{TTL:'86400',Urgency:'high',Authorization:'vapid t='+jwt+', k='+vapidPub(env)}});
+   if(res.status===404||res.status===410)await sq(env,'DELETE FROM push_subs WHERE id=?',r.id).run()}))}catch(e){console.error('web push failed:',e&&e.message)}}
+ async function pushKey(C){return J({key:vapidPub(C.env),on:!!(vapidPub(C.env)&&vapidPriv(C.env))})}
  async function pushSub(C){const b=C.b,ep=String(b.endpoint||'').slice(0,700);if(!PUSHHOST.test(ep))throw new Err(400,'invalid endpoint');let sub,who,sid;
   if(typeof b.token==='string'&&/^[0-9a-f]{48}$/.test(b.token)){const t=JSON.parse(await C.env.KV.get('gt:'+b.token)||'null');if(!t||t.who!=='guardian')throw new Err(401,'expired');sub=t.sub;who='g';sid=t.sid}
   else{const s=await need(C);sub=s.sub;who='s';sid=String(s.ph||'')}
