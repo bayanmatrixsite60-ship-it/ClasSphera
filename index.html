@@ -924,7 +924,7 @@ function authModal(m){if(m==='signup'){P.w={};return wiz(1)}
 /* login(): server-verified, see the v2.6 block at the end of this file */
 async function override(){const k=$('#mk').value,sub=findWs($('#ld').value)[0];if(!k||!sub)return toast('Enter the subdomain and master key');
  try{const j=await rq('/api/master-override',{key:k,sub});
-  modal(`<h3 class="font-bold">New administrator credentials</h3><p class="text-sm mt-2">Temporary password: <b class="ok">${esc(j.temp)}</b></p><p class="text-xs mu mt-2">After login you will be asked for the recovery code to unlock the encrypted ledger.</p>`)}catch(e){threat('Master key attempt',`workspace ${sub}`);toast('Override rejected')}}
+  modal(`<h3 class="font-bold">New administrator credentials</h3><p class="text-sm mt-2">Institution: <b>${esc(j.inst||'—')}</b><br>Workspace: <b>${esc(j.domain||sub+'.classphera.com')}</b>${j.admin&&j.admin.name?'<br>Administrator: <b>'+esc(j.admin.name)+'</b>':''}</p><p class="text-sm mt-2">Temporary password: <b class="ok">${esc(j.temp)}</b></p><p class="text-sm mt-2">Sign in with phone <b>${esc(j.phone)}</b> and email <b>${esc(j.mail)}</b></p><p class="text-xs mu mt-2">After login you will be asked for the recovery code to unlock the encrypted ledger.</p>`)}catch(e){threat('Master key attempt',`workspace ${sub}`);toast('Override rejected')}}
 function recoverModal(){modal(`<h3 class="font-bold text-lg">Unlock the encrypted ledger</h3><p class="text-sm mu mt-2">Enter the recovery code you saved when the workspace was created.</p><label>Recovery code</label><input id="rc" type="text"><button class="btn pri w-full mt-4" onclick="doRecover()">Unlock ledger</button><button class="btn w-full mt-2" onclick="closeM()">Skip for now</button>`)}
 async function doRecover(){try{const code=$('#rc').value.trim(),rk=w().rk,raw=await unseal(await kek(code,rk.salt),rk.wk);S.DK=await impDK(raw);await loadLed();const u=w().users.find(x=>x.email===S.user.email);u.wk=await wrapFor(P.pw,u.salt);P.pw='';save();if(S.user.role==='Admin'){try{await rq('/api/ws/recover/enroll',{token:S.user.token,rv:await csRv(code)})}catch(e){}}close();render();toast('Ledger unlocked')}catch(e){S.fails++;toast('Recovery code incorrect');if(S.fails>=3)threat('Recovery code guessing',S.user.sub)}}
 function wiz(n){const f=(id,l,ty='text',ph='')=>`<label>${l}</label><input id="${id}" type="${ty}" placeholder="${ph}" value="${esc(P.w[id]||'')}">`;
@@ -942,7 +942,7 @@ async function createWs(x){if(createWs.busy)return;createWs.busy=true;let st='pr
   toast('Creating encrypted workspace…');
   if(!(window.crypto&&crypto.subtle))throw{error:'This browser cannot run encryption (Web Crypto is unavailable). Open the site over HTTPS in an up-to-date browser.'};
   st='local encryption';
-  const id=await newId(),ph=nph(x.wh),DK=await crypto.subtle.generateKey({name:'AES-GCM',length:256},true,['encrypt','decrypt']),raw=await crypto.subtle.exportKey('raw',DK),salt=rid()+rid(),rs=rid()+rid(),rec=(rid()+rid()+rid()).slice(0,20);
+  const id=await newId(),ph=nph(x.wh),DK=await crypto.subtle.generateKey({name:'AES-GCM',length:256},true,['encrypt','decrypt']),raw=await crypto.subtle.exportKey('raw',DK),salt=rid()+rid(),rs=rid()+rid(),rec=[...crypto.getRandomValues(new Uint8Array(20))].map(x=>AL[x%32]).join('');
   const ws=fresh({name:x.wn,type:x.wt,size:x.ws,addr:{b:x.wb,s:x.wr,a:x.wa,c:x.wc,k:x.wk}},id);
   ws.users=[{name:x.we,email:ph,role:'Admin',mail:String(x.wm).trim().toLowerCase(),g:x.wg||null,salt,p:await hash(salt+x.wp),wk:await seal(await kek(x.wp,salt),raw)}];ws.rk={salt:rs,wk:await seal(await kek(rec,rs),raw),rv:await csRv(rec)};ws.led=await seal(DK,enc('[]'));
   st='server: POST /api/ws/create';
@@ -1568,7 +1568,7 @@ const gAdm=()=>{const x=w(),T=x.students;return`<div class="glass p-5 mt-4"><h3 
 <label class="flex gap-2 items-center"><input type="checkbox" ${x.cctv?'checked':''} onchange="gaCam(this.checked)" style="width:auto"> Enable CCTV live view for guardians</label>
 <label>Notice or urgent broadcast</label><input id="gnt" maxlength="300"><label class="flex gap-2 items-center mt-2"><input id="gnu" type="checkbox" style="width:auto"> Urgent alarm</label><button class="btn mt-2" onclick="gaNote()">Post notice</button>
 <div class="mt-4">${T.length?T.map(s=>`<div class="flex justify-between items-center py-2 border-b border-white/10 gap-2"><span class="text-sm">${esc(s.name)} <span class="mu text-xs">${esc(s.id)} ${s.gh?'· guardian PIN ✓':''}</span></span><button class="btn" onclick="gaOpen('${esc(s.id)}')">Access</button></div>`).join(''):'<p class="text-sm mu">Add students first.</p>'}</div>
-${(x.gin||[]).length?`<h4 class="font-bold mt-4 mb-2">Guardian messages</h4>`+x.gin.slice(-10).reverse().map(m=>`<div class="glass p-2 mb-2 text-sm">${esc((sT(m.sid)||{}).name||m.sid)}: ${esc(m.x)} <button class="btn ml-2" onclick="gaReply('${esc(m.sid)}')">Reply</button></div>`).join(''):''}
+<div id="gaIn">${gaInHtml(x)}</div>
 <button class="btn pri w-full mt-4" onclick="gaSync()">Publish to portal &amp; fetch messages</button></div>`};
 const p0=D.portal;D.portal=()=>p0()+(adm()?gAdm():'');
 window.gaCam=v=>{if(!adm())return;w().cam=v;w().cctv=!!v;save();toast(v?'CCTV enabled. Re-publish to apply.':'CCTV disabled. Re-publish to apply.')};
@@ -1597,6 +1597,27 @@ window.gaSave=async id=>{if(!adm())return;const s=sT(id),x=w(),v=i=>($('#'+i)||{
  const f=$('#ga3').files[0];if(f)try{s.photo=await new Promise((ok,no)=>{const im=new Image();im.onload=()=>{const c=document.createElement('canvas'),r=Math.min(1,240/Math.max(im.width,im.height));c.width=im.width*r;c.height=im.height*r;c.getContext('2d').drawImage(im,0,0,c.width,c.height);ok(c.toDataURL('image/jpeg',.8))};im.onerror=no;im.src=URL.createObjectURL(f)})}catch(e){toast('Photo could not be read')}
  save();close();render();toast('Saved. Publish to apply.')};
 const nk=()=>{const x=w();if(!/^[0-9a-f]{64}$/.test(x.nk||'')){x.nk=rh(32);save()}return x.nk};
+const gaInHtml=x=>(x.gin||[]).length?`<h4 class="font-bold mt-4 mb-2">Guardian messages</h4>`+x.gin.slice(-10).reverse().map(m=>`<div class="glass p-2 mb-2 text-sm">${esc((sT(m.sid)||{}).name||m.sid)}: ${esc(m.x)} <button class="btn ml-2" onclick="gaReply('${esc(m.sid)}')">Reply</button></div>`).join(''):'';
+/* live guardian messages: every 5 s the admin checks /api/g/inbox. It only touches the #gaIn block, never re-renders the page, so nothing being typed is lost.
+   It stays idle (no network) when the tab is hidden, offline, signed out, not an admin, or no portal is published; failures back off up to 60 s. */
+let gaBusy=0,gaFail=0,gaWait=0;
+window.gaPoll=async()=>{
+ if(gaBusy||document.hidden||!navigator.onLine||Date.now()<gaWait||!S.user||S.user.role!=='Admin')return;
+ let x;try{x=w()}catch(e){return}
+ if(!x||!/^[0-9a-f]{64}$/.test(x.nk||'')||!(x.students||[]).some(s=>s.gh||s.sh))return;
+ gaBusy=1;
+ try{
+  const ib=await gp('/api/g/inbox',{sub:S.user.sub,id:x.id,key:x.nk}),ms=Array.isArray(ib.msgs)?ib.msgs:[];gaFail=0;
+  if(!ms.length)return;
+  x.gth=x.gth||{};x.gin=x.gin||[];let n=0;
+  ms.forEach(m=>{const t=x.gth[m.sid]=x.gth[m.sid]||[];if(t.some(q=>q.f==='g'&&q.at===m.at&&q.x===m.x))return;t.push({f:'g',x:m.x,at:m.at});x.gin.push({sid:m.sid,x:m.x,at:m.at});n++});
+  if(!n)return;
+  x.gin=x.gin.slice(-50);save();
+  const el=document.getElementById('gaIn');if(el)el.innerHTML=gaInHtml(x);
+  toast(n+' new guardian message'+(n>1?'s':''))
+ }catch(e){gaFail=Math.min(gaFail+1,4);gaWait=Date.now()+Math.min(60000,5000*Math.pow(2,gaFail))}
+ finally{gaBusy=0}};
+setInterval(()=>window.gaPoll(),5000);
 window.gaSync=async()=>{if(!adm())return;const x=w();toast('Publishing…');
  try{const rows=x.students.filter(s=>s.gh||s.sh).map(s=>({id:s.id,ph:fp(s.gphone),gh:s.gh||'',gs:s.gs||'',sh:s.sh||'',ss:s.ss||'',d:snap(s)})),j=await gp('/api/g/sync',{sub:S.user.sub,id:x.id,key:nk(),students:rows}),ib=await gp('/api/g/inbox',{sub:S.user.sub,id:x.id,key:nk()});
   (ib.msgs||[]).forEach(m=>{(x.gth=x.gth||{});(x.gth[m.sid]=x.gth[m.sid]||[]).push({f:'g',x:m.x,at:m.at});(x.gin=x.gin||[]).push({sid:m.sid,x:m.x,at:m.at})});x.gin=(x.gin||[]).slice(-50);save();render();toast(j.count+' student portals published'+(ib.msgs&&ib.msgs.length?', '+ib.msgs.length+' new messages':''))}catch(e){toast(e.message)}};
@@ -2160,6 +2181,7 @@ function loginPhones(raw){
  const ins=typed.startsWith('+')?[String(raw||'')]:[String(raw||''),'+'+dig];
  cs.slice(0,3).forEach(c=>ins.forEach(v=>{try{const r=phone(v,c);if(r&&r.v&&!der.includes(r.v))der.push(r.v)}catch(e){}}));
  const out=der.slice(0,3).filter(v=>v!==typed);out.push(typed);return out}
+window.csLoginPhones=loginPhones;
 window.csEnter=enter;window.login=async function(){if(Date.now()<S.lock)return toast('Too many attempts. Try again in a minute.');
  const dm=$('#ld').value,ph=nph($('#lh').value),em=$('#le').value.trim().toLowerCase(),pw=$('#lp').value;if(!dm.trim()||!ph||!em||!pw)return toast('Fill in all four fields');
  if(RX.test(dm+em)){threat('Injection in login',dm+' '+em);return tamperModal()}
@@ -2372,8 +2394,9 @@ async function bioAuth(c){
  bioUI('scan','Place your finger on the sensor or look at the camera…','Use this device’s fingerprint or Face ID to continue.');
  try{
   if(!PKOK())throw{m:'This browser or device cannot use fingerprint / Face ID here. Use the authenticator app or the emailed code instead.'};
-  const ch=await rq('/api/passkey/challenge',{sub:c.sub,phone:c.ph,mail:c.em,fp:c.f});
-  if(!ch||!ch.challenge||!Array.isArray(ch.ids)||!ch.ids.length)throw{m:'No fingerprint or Face ID is registered for this account yet. Sign in with a code once, then add it from the dashboard.'};
+  let ch=null,ce=null;const cand=Array.isArray(c.phs)&&c.phs.length?c.phs:[c.ph]; /* the number is saved as +880…; the user may type 01712… */
+  for(let i=0;i<cand.length&&!ch;i++){try{const t=await rq('/api/passkey/challenge',{sub:c.sub,phone:cand[i],mail:c.em,fp:c.f});if(t&&t.challenge&&Array.isArray(t.ids)&&t.ids.length){ch=t;c.ph=cand[i]}}catch(e){if(!ce)ce=e}}
+  if(!ch){if(ce&&!(ce.status===401||ce.status===404))throw ce;throw{m:'No fingerprint or Face ID is registered for this account yet. Sign in with a code once, then add it from the dashboard.'}}
   const a=await navigator.credentials.get({publicKey:{challenge:U8B(ch.challenge),rpId:location.hostname,allowCredentials:ch.ids.map(id=>({type:'public-key',id:U8B(id)})),userVerification:'required',timeout:60000}});
   if(!alive())return;
   bioUI('scan','Scanning Biometrics…','Checking your identity securely.');
@@ -2392,7 +2415,7 @@ window.csBioLogin=async function(){
  if(!em)er.push(['le','Enter your email']);else if(!MAIL.test(em))er.push(['le','Enter a valid email address']);
  const sub=dm?findWs(dm)[0]:'';if(dm&&!/^[a-z0-9](?:[a-z0-9-]{1,28}[a-z0-9])$/.test(sub||''))er.push(['ld','Use an address like yourschool.classphera.com']);
  if(er.length)return showErr(er);
- bioAuth({sub,ph:nph(ph0),em,pw:($('#lp')||{value:''}).value,f:await window.csFp()})};
+ bioAuth({sub,ph:nph(ph0),phs:(window.csLoginPhones?window.csLoginPhones(ph0):[nph(ph0)]),em,pw:($('#lp')||{value:''}).value,f:await window.csFp()})};
 window.csBioOtp=async function(){const O=S.otp;if(!O)return;bioAuth({sub:O.sub,ph:O.ph,em:O.em,pw:O.pw,f:O.f})};
 /* ---------- authenticator-app code at the two-step screen ---------- */
 async function csTotp(){const O=S.otp;if(!O)return closeM();const i=$('#otp'),m=$('#otpm'),v=i.value.trim(),fail=t=>{i.classList.add('cs-err');m.innerHTML=`<div class="cs-msg">⚠ ${t}</div>`};
@@ -3235,7 +3258,11 @@ window.csLukGo=function(){
  if(!code)er.push(['luk','Enter your Ledger Unlock Key']);
  if(er.length){er.forEach(x=>bad(x[0],x[1]));const f=$('#'+er[0][0]);if(f)f.focus();return}
  if(RX.test(dm+em)){threat('Injection in recovery',dm+' '+em);return tamperModal()}
- P.rec={sub,ph:nph(phr),em,code,dm,phr};
+ P.rec={
+  sub, ph: nph(phr),
+  phs: (window.csLoginPhones ? window.csLoginPhones(phr) : [nph(phr)]),
+  em, code: code.toUpperCase().replace(/\s+/g, ''), dm, phr
+ };
  resetModal()};
 
 function resetModal(){const R=P.rec||{};
@@ -3252,17 +3279,28 @@ window.csLukReset=async function(){
  const say=t=>{m.innerHTML='<div class="cs-msg">⚠ '+esc(t)+'</div>'};
  if(a.length<8)return bad('rnp','Use at least 8 characters');
  if(a!==b)return bad('rnc','The two passwords do not match');
- if(btn)btn.disabled=true;R.busy=true;let j=null;
+ if(btn)btn.disabled=true;R.busy=true;let j=null,okPh=R.ph,lastErr=null;
+ const list=(Array.isArray(R.phs)&&R.phs.length)?R.phs:[R.ph];
  try{
   const f=await window.csFp(),salt=[...crypto.getRandomValues(new Uint8Array(12))].map(x=>AL2[x%32]).join(''),p=await hash(salt+a),rc=await csRv(R.code);
-  j=await rq('/api/ws/recover',{sub:R.sub,phone:R.ph,mail:R.em,rc,p,salt,fp:f},30000);
-  if(!j||!j.token)throw{error:'The server sent no session. Please try again.'}
+  for(let i=0;i<list.length;i++){
+   try{
+    j=await rq('/api/ws/recover',{sub:R.sub,phone:list[i],mail:R.em,rc,p,salt,fp:f},30000);
+    if(!j||!j.token)throw{error:'The server sent no session. Please try again.'}
+    okPh=list[i];lastErr=null;break
+   }catch(e){
+    j=null;lastErr=e;
+    if(e&&e.status===401&&i<list.length-1)continue;
+    break
+   }
+  }
+  if(!j||!j.token)throw(lastErr||{error:'The server sent no session. Please try again.'})
  }catch(e){
   R.busy=false;if(btn)btn.disabled=false;const st=e&&e.status;
   if(st===401){S.fails=(S.fails||0)+1;if(S.fails>=3)try{threat('Recovery code guessing',R.sub)}catch(_){}return say('Ledger Unlock Key does not match, or password reset is not switched on for this workspace yet. If the key is correct, this older workspace needs a one-time activation: sign in as administrator (use "Locked out? Founder override" if you forgot the password), then enter this same key in "Unlock the encrypted ledger". After that, this reset works.')}
   if(st===429)return say((e&&e.error)||'Too many wrong attempts. Wait 15 minutes and try again.');
   return say((e&&e.error)||'Reset service unavailable. Please try again.')}
- try{S.fails=0;await window.csEnter(R.sub,R.ph,R.em,a,j.token);toast('✅ Password changed. Ledger unlocked.')}
+ try{S.fails=0;await window.csEnter(R.sub,okPh,R.em,a,j.token);toast('✅ Password changed. Ledger unlocked.')}
  catch(e){P.rec=null;closeM();toast((e&&e.error)||'Password changed. Sign in with the new password.')}};
 
 /* never keep the recovery code in memory once the modal is gone */

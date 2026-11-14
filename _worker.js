@@ -4,8 +4,8 @@
    BINDINGS   DB (D1) · KV (KV namespace) · ASSETS (automatic on Pages) · R2 (optional: snapshots, backups, audit) · AI (optional: Workers AI)
    SECRETS    TG_TOKEN, TG_CHAT, MASTER_KEY (16+ chars; also signs sessions unless JWT_SECRET is set)
    OPTIONAL   JWT_SECRET · GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET · STRIPE_KEY · STRIPE_WEBHOOK_SECRET
-              TWILIO_SID/TWILIO_TOKEN/TWILIO_FROM/TWILIO_WA_FROM · MAIL_KEY + MAIL_FROM (Resend) · FOUNDER_EMAIL
-              SMS_DAILY_CAP · OTP_DAILY_CAP · AI_DAILY_CAP · SLOW_MS · SITE_LASTMOD
+              EMAIL (Cloudflare Send Email binding) + MAIL_FROM · MAIL_KEY (Resend, fallback only) · FOUNDER_EMAIL
+              OTP_DAILY_CAP · AI_DAILY_CAP · SLOW_MS · SITE_LASTMOD
    DATABASE   created and upgraded automatically by migrate() (schema_meta, versions 1.0 → 2.2). Old rows are never dropped.
    STORAGE    every institution workspace is stored as named sections ("parts") in D1 with a revision number per section.
               Writes are atomic and revision-checked (optimistic concurrency); sections over 400k chars are chunked.
@@ -133,6 +133,7 @@ const SCHEMA=[
 ['2.3',['CREATE TABLE IF NOT EXISTS kvx(k TEXT PRIMARY KEY,v TEXT NOT NULL,exp INTEGER NOT NULL DEFAULT 0)']],
 ['2.4',['DROP INDEX IF EXISTS idx_kvx_exp']], /* an index doubles the write cost of every put; the table is small and purged, so a scan is cheaper */
 ['2.5',['CREATE TABLE IF NOT EXISTS portal_out(id INTEGER PRIMARY KEY AUTOINCREMENT,sub TEXT NOT NULL,sid TEXT NOT NULL,k TEXT NOT NULL DEFAULT \'m\',x TEXT NOT NULL,u INTEGER NOT NULL DEFAULT 0,at INTEGER NOT NULL)','CREATE INDEX IF NOT EXISTS idx_portal_out ON portal_out(sub,sid,id)']] /* teacher replies (k=m) and notices (k=b, sid=*) that guardians read live through /api/g/data */
+,['2.6',["CREATE TABLE IF NOT EXISTS notifications(id TEXT PRIMARY KEY,workspace_sub TEXT NOT NULL,recipient_id TEXT NOT NULL,title TEXT NOT NULL,body TEXT NOT NULL,type TEXT,action_url TEXT,is_read INTEGER DEFAULT 0,created_at DATETIME)",'CREATE INDEX IF NOT EXISTS idx_notifications_rcpt ON notifications(workspace_sub,recipient_id,created_at)']] /* in-house guardian alerts (attendance, reports, receipts): written by /api/notify*, read live by the guardian through /api/g/data */
 ];
 let MIGRATED=null;
 function migrate(env){
@@ -170,15 +171,14 @@ async function fail(env,ip,why){if(await hit(env,'ff:'+ip,5,10)){try{await env.K
 
 /* ───────────── mail / SMS / OTP delivery ───────────── */
 async function sendMail(env,to,subject,html,text){
- if(!env.MAIL_KEY||!env.MAIL_FROM||!MAILRX.test(String(to||'')))return false;
+ if(!MAILRX.test(String(to||'')))return false;
+ const mb=env.EMAIL||env.SEND_EMAIL; /* Cloudflare native Send Email binding */
+ if(mb&&typeof mb.send==='function'){try{await mb.send({to,from:env.MAIL_FROM||'no-reply@classphera.com',subject,html,text});return true}catch(e){console.warn('[ClasSphera] Cloudflare Email send failed: '+(e&&e.message))}}
+ if(!env.MAIL_KEY||!env.MAIL_FROM)return false;
  try{const r=await fetch('https://api.resend.com/emails',{method:'POST',headers:{authorization:'Bearer '+env.MAIL_KEY,'content-type':'application/json'},body:JSON.stringify({from:env.MAIL_FROM,to:[to],subject,html,text})});return r.ok}catch{return false}}
-async function twilio(env,to,body,wa){
- if(!env.TWILIO_SID||!env.TWILIO_TOKEN)return false;const from=wa?(env.TWILIO_WA_FROM?'whatsapp:'+env.TWILIO_WA_FROM:''):env.TWILIO_FROM;if(!from)return false;
- try{const r=await fetch(`https://api.twilio.com/2010-04-01/Accounts/${env.TWILIO_SID}/Messages.json`,{method:'POST',headers:{authorization:'Basic '+btoa(env.TWILIO_SID+':'+env.TWILIO_TOKEN)},body:new URLSearchParams({To:(wa?'whatsapp:':'')+to,From:from,Body:body})});return r.ok}catch{return false}}
 async function sendOtp(env,mail,phone,code){
  const ok=await sendMail(env,mail,'Your ClasSphera verification code',`<div style="font-family:Inter,Arial,sans-serif;background:#070812;color:#e6e9f5;padding:28px;border-radius:16px;max-width:420px"><h2 style="margin:0 0 8px">ClasSphera 🔐</h2><p style="color:#9aa1b9">Your 6-digit verification code:</p><p style="font-size:34px;font-weight:800;letter-spacing:10px;color:#34d399;margin:14px 0">${code}</p><p style="color:#9aa1b9;font-size:12px">Valid for 5 minutes. If this was not you, ignore this message and tell your Principal.</p></div>`,`ClasSphera code: ${code} (valid 5 minutes)`);
  if(ok)return 'mail';
- if(/^\+\d{7,15}$/.test(phone)&&await twilio(env,phone,`ClasSphera code: ${code}. Valid 5 minutes.`))return 'sms';
  return null}
 
 /* ───────────── sessions ───────────── */
@@ -467,12 +467,14 @@ async function masterOverride(C){
  if(await hit(env,'mo:'+ip,3,3600)){await alert(env,ip,'Master key flood',`workspace ${sub}`);throw new Err(429,'locked')}
  if(!env.MASTER_KEY||!eq(b.key||'',env.MASTER_KEY)){await fail(env,ip,'master key '+sub);await alert(env,ip,'Master key attempt',`workspace ${sub}`);throw new Err(403,'rejected')}
  if(!SUBRX.test(sub))throw new Err(400,'invalid subdomain');
- const temp=rnd(6),salt=rnd(8).toUpperCase(),p=await sha('cs:'+salt+temp);let done=false;
- await mutatePart(env,sub,'users',us=>{if(!Array.isArray(us))throw new Err(404,'workspace not found');const a=us.find(u=>u.role==='Admin');if(!a)throw new Err(404,'no administrator found');a.salt=salt;a.p=p;done=true;return us});
+ const temp=rnd(6),salt=rnd(8).toUpperCase(),p=await sha('cs:'+salt+temp);let done=false,info=null;
+ await mutatePart(env,sub,'users',us=>{if(!Array.isArray(us))throw new Err(404,'workspace not found');const a=us.find(u=>u.role==='Admin');if(!a)throw new Err(404,'no administrator found');a.salt=salt;a.p=p;done=true;info={phone:a.phone||a.email,mail:a.mail,name:a.name||''};return us});
  if(!done)throw new Err(404,'workspace not found');
  await env.KV.put('sxr:'+sub,String(nowS()),{expirationTtl:90000});memoDel('rv:'+sub+':');
  await env.KV.put('skipotp:'+sub,'1',{expirationTtl:1800});
- await alert(env,ip,'Master override used',`workspace ${sub}`);return J({temp})}
+ const ins=await dbInst(env,sub).catch(()=>null),inst=(ins&&ins.name)||'',domain=sub+'.classphera.com';
+ await alert(env,ip,'Master override used',`workspace ${sub}${inst?' · '+inst:''}`);
+ return J({temp,phone:info.phone,mail:info.mail,sub,inst,iname:inst,itype:(ins&&ins.itype)||'',country:(ins&&ins.country)||'',domain,admin:{name:info.name,phone:info.phone,mail:info.mail}})}
 
 /* ───────────── Ledger Unlock Key: reset a lost password with the recovery code ─────────────
    The recovery code itself never reaches the server. The browser derives a 64-hex proof (rc) from it.
@@ -609,31 +611,42 @@ async function clientEvent(C){
  await sq(env,'INSERT INTO events(sub,kind,data,at) VALUES(?,?,?,?)',s.sub,kind,txt,iso()).run();
  if(Math.random()<.02)await sq(env,'DELETE FROM events WHERE sub=?1 AND kind=?2 AND id<=(SELECT id FROM events WHERE sub=?1 AND kind=?2 ORDER BY id DESC LIMIT 1 OFFSET 5000)',s.sub,kind).run().catch(()=>{});
  return J({ok:true})}
+/* in-house guardian alerts: no SMS / WhatsApp gateway. Each alert is written straight into the D1 notifications table
+   and the guardian sees it live inside the website through /api/g/data. Recipient = sid, or the guardian phone matched to portal.ph. */
+async function inApp(env,sub,items){
+ const rows=items.map(a=>({sid:/^[A-Za-z0-9-]{1,24}$/.test(String(a.sid||''))?String(a.sid).toUpperCase():'',ph:String(a.to||'').replace(/\D/g,'').slice(-10),ev:str(a.ev,60),x:str(a.msg,200)})).filter(a=>a.x&&(a.sid||a.ph.length>=7));
+ if(!rows.length)return{sent:0,failed:items.length};
+ const phs=[...new Set(rows.filter(a=>!a.sid).map(a=>a.ph))],by=new Map();
+ if(phs.length){const r=(await sq(env,'SELECT sid,ph FROM portal WHERE sub=?1 AND ph IN (SELECT value FROM json_each(?2))',sub,JSON.stringify(phs)).all()).results||[];for(const p of r){if(!by.has(p.ph))by.set(p.ph,[]);by.get(p.ph).push(p.sid)}}
+ const at=Date.now(),st=[];let sent=0;
+ for(const a of rows){const sids=a.sid?[a.sid]:(by.get(a.ph)||[]);if(!sids.length)continue;sent++;
+  for(const sid of sids)st.push(sq(env,'INSERT INTO notifications(id,workspace_sub,recipient_id,title,body,type,is_read,created_at) SELECT ?1,?2,?3,?4,?5,?6,0,?7 WHERE NOT EXISTS(SELECT 1 FROM notifications WHERE workspace_sub=?2 AND recipient_id=?3 AND body=?5 AND created_at>?8)',rnd(8),sub,sid,a.ev||'Alert',a.x,'guardian_alert',new Date(at).toISOString(),new Date(at-216e5).toISOString()))} /* the same alert is not repeated within 6 hours */
+ for(let i=0;i<st.length;i+=40)await env.DB.batch(st.slice(i,i+40));
+ if(st.length&&Math.random()<.05)await sq(env,'DELETE FROM notifications WHERE workspace_sub=?1 AND id IN (SELECT id FROM notifications WHERE workspace_sub=?1 ORDER BY created_at DESC LIMIT -1 OFFSET 5000)',sub).run().catch(()=>{});
+ return{sent,failed:items.length-sent}}
 async function notifyCh(C){
  const s=await auth(C),d=envelope(C),env=C.env,ch=C.path.split('/').pop();
  if(!s){if(d.tenant==='demo'||C.b.tenant==='demo')return J({ok:true,dropped:true},202);throw new Err(401,'invalid session')}
  if(!['Admin','Teacher'].includes(s.role))throw new Err(403,'Your role cannot send alerts');
- const ev=str(d.event,60),msg=str(d.msg,160).replace(/https?:\/\/\S+/gi,''),to=nph(d.to);
+ const ev=str(d.event,60),msg=str(d.msg,160).replace(/https?:\/\/\S+/gi,''),to=nph(d.to),sid=str(d.sid,24).toUpperCase(),hasSid=/^[A-Z0-9-]{1,24}$/.test(sid);
  if(!ev||!msg)throw new Err(400,'event and message are required');
  let status='local';
- if(ch==='sms'||ch==='whatsapp'){
-  if(!PHONERX.test(to))throw new Err(400,'invalid phone');
-  if(await spend(env,'smsw:'+s.sub,1,100,86400)||await spend(env,'smsg',1,+env.SMS_DAILY_CAP||500,86400))throw new Err(429,'daily limit');
-  status=await twilio(env,to,msg,ch==='whatsapp')?'sent':'queued_unconfigured'}
+ if(ch==='sms'||ch==='whatsapp'||PHONERX.test(to)||hasSid){
+  if(!hasSid&&!PHONERX.test(to))throw new Err(400,'invalid phone');
+  if(hitMem('ntf:'+s.sub,2000,86400000))throw new Err(429,'daily limit');
+  const r=await inApp(env,s.sub,[{to,sid:hasSid?sid:'',ev,msg}]);status=r.sent?'in_app':'no_guardian_portal'}
  await sq(env,'INSERT INTO events(sub,kind,data,at) VALUES(?,?,?,?)',s.sub,'out:'+ch,JSON.stringify({to,event:ev,msg,status}),iso()).run();
  return J({ok:true,status})}
-async function notifyLegacy(C){ /* {sub,id,key,messages:[{to,name,status,inst}]} → {sent,failed}; the server writes the SMS text itself */
+async function notifyLegacy(C){ /* {sub,id,key,messages:[{to,name,status,inst}]} → {sent,failed}; the server writes the alert text itself and saves it in-app */
  const{b,env}=C,sub=wsn(b.sub);if(!SUBRX.test(sub))throw new Err(401,'unauthorized');
  await tenantAuth(C,sub,['Admin','Teacher']);
- if(!env.TWILIO_SID||!env.TWILIO_TOKEN||!env.TWILIO_FROM)throw new Err(503,'SMS provider not configured');
  if(hitMem('sms:'+C.ip,12,3600000))throw new Err(429,'rate limited');
  const nm=v=>String(v||'').replace(/[^\p{L}\p{M}\p{N} ,'’()&-]/gu,'').replace(/\s+/g,' ').trim(),m=[];
  for(const a of(Array.isArray(b.messages)?b.messages:[]).slice(0,100)){const to=nph(a&&a.to),st=String(a&&a.status||'').toLowerCase(),name=nm(a&&a.name).slice(0,60),inst=nm(a&&a.inst).slice(0,80);
-  if(PHONERX.test(to)&&(st==='present'||st==='absent'||st==='late')&&name&&inst)m.push({to,text:`${name} was ${st} today at ${inst}.`})}
+  if(PHONERX.test(to)&&(st==='present'||st==='absent'||st==='late')&&name&&inst)m.push({to,ev:'attendance',msg:`${name} was ${st} today at ${inst}.`})}
  if(!m.length)throw new Err(400,'no valid recipients');
- if(await spend(env,'smsw:'+sub,m.length,100,86400)||await spend(env,'smsg',m.length,+env.SMS_DAILY_CAP||500,86400))throw new Err(429,'daily limit');
- const r=await Promise.allSettled(m.map(a=>twilio(env,a.to,a.text,false).then(ok=>{if(!ok)throw 0}))),sent=r.filter(x=>x.status==='fulfilled').length;
- return J({sent,failed:r.length-sent},sent?200:502)}
+ const r=await inApp(env,sub,m);
+ return J({sent:r.sent,failed:r.failed},r.sent?200:502)}
 /* institution-level authority: a valid session of an allowed role, or the workspace key that the admin saved in the workspace itself */
 async function tenantAuth(C,sub,roles){
  const s=await auth(C);if(s&&s.sub===sub&&(!roles||roles.includes(s.role)))return{via:'session',s};
@@ -721,8 +734,9 @@ async function gLogin(C){
  let d={};try{d=JSON.parse(s.d)}catch{}return J({token,who,d:proj(d,who)})}
 async function gData(C){
  const t=JSON.parse(await C.env.KV.get('gt:'+String(C.b.token||'').slice(0,60))||'null');if(!t)throw new Err(401,'expired');
- const[a,o]=await C.env.DB.batch([sq(C.env,'SELECT d FROM portal WHERE sub=? AND sid=?',t.sub,t.sid),
-  sq(C.env,"SELECT k,x,u,at FROM portal_out WHERE sub=? AND (sid=? OR sid='*') ORDER BY id DESC LIMIT 80",t.sub,t.sid)]);
+ const[a,o,n]=await C.env.DB.batch([sq(C.env,'SELECT d FROM portal WHERE sub=? AND sid=?',t.sub,t.sid),
+  sq(C.env,"SELECT k,x,u,at FROM portal_out WHERE sub=? AND (sid=? OR sid='*') ORDER BY id DESC LIMIT 80",t.sub,t.sid),
+  sq(C.env,'SELECT title AS ev,body AS x,is_read AS u,created_at AS at FROM notifications WHERE workspace_sub=? AND recipient_id=? ORDER BY created_at DESC LIMIT 40',t.sub,t.sid)]);
  const s=a.results&&a.results[0];if(!s)throw new Err(401,'expired');
  let d={};try{d=JSON.parse(s.d)}catch{}d=proj(d,t.who);
  if(t.who==='guardian'){ /* live layer: replies and notices written after the last publish are merged in, de-duplicated by time + text */
@@ -730,7 +744,9 @@ async function gData(C){
   for(const r of rows){
    if(r.k==='b'){if(!board.some(m=>m&&+m.at===+r.at&&m.t===r.x))board.push({t:r.x,u:!!r.u,at:+r.at})}
    else if(!msgs.some(m=>m&&m.f==='s'&&+m.at===+r.at&&m.x===r.x))msgs.push({f:'s',x:r.x,at:+r.at})}
-  d.msgs=msgs.sort((p,q)=>(+p.at||0)-(+q.at||0)).slice(-60);d.board=board.sort((p,q)=>(+q.at||0)-(+p.at||0)).slice(0,20)}
+  const nt=((n&&n.results)||[]).map(r=>({ev:r.ev,x:r.x,u:!!r.u,at:Date.parse(r.at)||0})); /* in-house alerts (attendance, reports, receipts) */
+  d.notifs=nt;for(const r of nt){if(!board.some(m=>m&&+m.at===r.at&&m.t===r.x))board.push({t:r.x,u:false,at:r.at,ev:r.ev})}
+  d.msgs=msgs.sort((p,q)=>(+p.at||0)-(+q.at||0)).slice(-60);d.board=board.sort((p,q)=>(+q.at||0)-(+p.at||0)).slice(0,40)}
  return J({d,now:Date.now()})}
 async function gReply(C){ /* institution/teacher → one guardian, delivered live through /api/g/data */
  const{b,env}=C,sub=wsn(b.sub),sid=str(b.sid,24).toUpperCase();if(!SUBRX.test(sub)||!/^[A-Z0-9-]{1,24}$/.test(sid))throw new Err(400,'invalid request');
@@ -765,11 +781,7 @@ async function gOtp(C){
  if(!(await sq(env,'SELECT 1 AS x FROM portal WHERE sub=? AND sid=?',sub,sid).first()))throw new Err(404,'not found');
  const sts=await getJson(env,sub,'students'),st=Array.isArray(sts)?sts.find(x=>x&&String(x.id).toUpperCase()===sid):null,ph=nph(st&&st.gphone);
  if(!/^\+\d{7,15}$/.test(ph))throw new Err(422,'Guardian phone must include the country code');
- if(await spend(env,'smsg',1,+env.SMS_DAILY_CAP||500,86400))throw new Err(429,'daily limit');
- const code=String(crypto.getRandomValues(new Uint32Array(1))[0]%1000000).padStart(6,'0');
- await env.KV.put('gq:'+sub+':'+sid,JSON.stringify({h:await hmac(env,`gq|${code}|${sub}|${sid}`),n:0}),{expirationTtl:300});
- if(!(await twilio(env,ph,`ClasSphera code: ${code}. Valid 5 minutes.`,false))){await env.KV.delete('gq:'+sub+':'+sid);throw new Err(503,'SMS provider not configured')}
- return J({ok:true})}
+ throw new Err(410,'Codes are no longer sent by SMS. Sign in with the Student admission ID and your PIN, or ask the institution to reset it.')}
 async function gQuick(C){
  const{b,env,ip}=C,sub=wsn(b.sub),sid=str(b.sid,24).toUpperCase(),pin=String(b.pin||'').slice(0,40);
  if(!SUBRX.test(sub)||!sid||pin.length<4)throw new Err(400,'invalid request');
@@ -867,7 +879,7 @@ async function fHealth(C){
  const{b,env,ip}=C;if(!env.MASTER_KEY||!eq(b.key||'',env.MASTER_KEY)){await fail(env,ip,'founder health');throw new Err(403,'rejected')}
  const c=async q=>(await env.DB.prepare(q).first())||{},since=new Date(Date.now()-864e5).toISOString();
  const[i,p,po,pay,al,ev]=await Promise.all([c('SELECT COUNT(*) AS n FROM institutions'),c('SELECT COUNT(*) AS n,COALESCE(SUM(size),0) AS bytes FROM ws_parts'),c('SELECT COUNT(*) AS n FROM portal'),c("SELECT COUNT(*) AS n FROM payments WHERE status='pending'"),env.DB.prepare('SELECT COUNT(*) AS n FROM alerts WHERE at>?').bind(since).first(),c('SELECT COUNT(*) AS n FROM events')]);
- return J({ok:true,app:APP_V,schema:SCHEMA[SCHEMA.length-1][0],dataSchema:DATA_SCHEMA,institutions:i.n,sections:p.n,bytes:p.bytes,portalRows:po.n,pendingPayments:pay.n,alerts24h:al&&al.n,events:ev.n,r2:!!env.R2,ai:!!env.AI,mail:!!env.MAIL_KEY,sms:!!env.TWILIO_SID})}
+ return J({ok:true,app:APP_V,schema:SCHEMA[SCHEMA.length-1][0],dataSchema:DATA_SCHEMA,institutions:i.n,sections:p.n,bytes:p.bytes,portalRows:po.n,pendingPayments:pay.n,alerts24h:al&&al.n,events:ev.n,r2:!!env.R2,ai:!!env.AI,mail:!!env.MAIL_KEY,sms:false,inapp:true,email:!!(env.EMAIL||env.SEND_EMAIL)})}
 async function fRestore(C){
  const{b,env,ip}=C;if(!env.MASTER_KEY||!eq(b.key||'',env.MASTER_KEY)){await fail(env,ip,'founder restore');throw new Err(403,'rejected')}
  if(!env.R2)throw new Err(503,'R2 is not connected');const sub=wsn(b.sub),key=String(b.snapshot||'');if(!SUBRX.test(sub)||!key.startsWith(`snapshots/${sub}/`))throw new Err(400,'invalid snapshot');
