@@ -293,6 +293,23 @@ async function confirmedPlan(env,sub){
  const until=new Date(r.at).getTime()+(/annual/i.test(r.item)?366:31)*864e5;if(until<Date.now())return null;
  return{name:r.item,gateway:r.gateway,status:'paid',ref:r.id,until:new Date(until).toISOString()}}
 
+/* student limit per plan, enforced on the server: Free (also after a plan ends) 100, Starter 500, Institution 1,500, Sovereign unlimited */
+const planStuLimit=name=>/^starter/i.test(name||'')?500:/^institution/i.test(name||'')?1500:/^sovereign/i.test(name||'')?Infinity:100;
+/* plan renewal reminders: a paid plan ends 31 days (monthly) or 366 days (annual) after its payment; for the last 7 days one e-mail a day goes to the institution administrator */
+async function planRemind(env,only){
+ const now=Date.now(),day=iso().slice(0,10);let sent=0;
+ const rows=(await sq(env,"SELECT sub,item,MAX(at) AS at FROM payments WHERE status='paid' AND item LIKE '%plan%' AND sub IS NOT NULL"+(only?' AND sub=?':'')+' GROUP BY sub',...(only?[only]:[])).all()).results||[];
+ for(const r of rows){
+  const until=new Date(r.at).getTime()+(/annual/i.test(r.item)?366:31)*864e5,left=Math.ceil((until-now)/864e5);
+  if(!(until>now&&left>=1&&left<=7))continue;
+  const k='prem:'+r.sub+':'+day;try{if(await env.KV.get(k))continue}catch{}
+  const us=await getJson(env,r.sub,'users'),a=Array.isArray(us)?us.find(u=>u&&u.role==='Admin'&&MAILRX.test(String(u.mail||''))):null;if(!a)continue;
+  const pn=((/^(starter|institution|sovereign)/i.exec(String(r.item))||[])[0]||'Paid').replace(/^./,c=>c.toUpperCase()),end=new Date(until).toISOString().slice(0,10),url='https://'+r.sub+'.classphera.com';
+  const en=`Your ClasSphera ${pn} plan ends in ${left} day${left>1?'s':''} (on ${end}). After that the workspace returns to the Free plan (up to 100 student records). Your data stays safe, but you cannot add students beyond the Free limit until you renew. Renew from Plans and pricing inside your workspace: ${url}`,
+   bn=`আপনার ClasSphera ${pn} প্ল্যান আর ${left} দিন পরে (${end}) শেষ হবে। এরপর ওয়ার্কস্পেস ফ্রী প্ল্যানে (সর্বোচ্চ ১০০ শিক্ষার্থী) ফিরে যাবে। আপনার তথ্য নিরাপদ থাকবে, কিন্তু নবায়ন না করা পর্যন্ত ফ্রী সীমার বেশি শিক্ষার্থী যোগ করা যাবে না। ওয়ার্কস্পেসের Plans and pricing থেকে নবায়ন করুন: ${url}`;
+  const ok=await sendMail(env,a.mail,`ClasSphera: your ${pn} plan ends in ${left} day${left>1?'s':''}`,`<p>${X(en)}</p><p>${X(bn)}</p>`,en+'\n\n'+bn);
+  if(ok){sent++;try{await env.KV.put(k,'1',{expirationTtl:172800})}catch{}}}
+ return sent}
 /* ───────────── non-destructive data migrations + snapshots ───────────── */
 const DM=[
 {v:2,keys:['students'],up(P,ch){const a=P.students;if(!Array.isArray(a))return;for(const s of a){if(!isO(s))continue;let c=false;if(!isO(s.marks)){s.marks={};c=true}if(!Array.isArray(s.rem)){s.rem=[];c=true}if(!isO(s.cf)){s.cf={};c=true}if(typeof s.feeCyc!=='string'||!s.feeCyc){s.feeCyc='monthly';c=true}if(c)ch.add('students')}}},
@@ -436,6 +453,7 @@ async function otpVerify(C){
  return sessResp(await issue(C,{sub,ph:phone,role:rec.role},fp),{ok:true})}
 async function wsLoad(C){
  const{b,env}=C,s=await need(C);await ensureData(C,s.sub);
+ if(s.role==='Admin'&&!hitMem('prl:'+s.sub,1,3600000))bg(C,planRemind(env,s.sub));
  const cr=isO(b.revs)?b.revs:null;
  const pack=(rows,gone)=>{const f=[],rv={};for(const[k,x]of rows){if(x.deleted||!x.raw||hiddenFor(s.role,k))continue;f.push(JSON.stringify(k)+':'+(k==='users'&&s.role!=='Admin'?redactUsers(x.raw,s.ph):k==='th'?thView(x.raw,s.ph):x.raw));rv[k]=x.rev}return{f,rv,gone}};
  if(!cr){const rows=await readParts(env,s.sub,null);if(!rows.size)throw new Err(404,'workspace not found');const p=pack(rows,[]);return JR('{"ws":{'+p.f.join(',')+'},"revs":'+JSON.stringify(p.rv)+'}')}
@@ -461,6 +479,8 @@ async function wsSave(C){
  if(P.inst!==undefined&&(!isO(P.inst)||str(P.inst.name,120).length<2))throw new Err(400,'Institution name is required');
  const pn=[];if(P.th!==undefined)P.th=await thMerge(env,s.sub,P.th,s.ph,s.role,pn);
  if(P.plan!==undefined){const cp=await confirmedPlan(env,s.sub);P.plan=cp||(isO(P.plan)?{name:str(P.plan.name,60),gateway:str(P.plan.gateway,30),status:'pending'}:null)}
+ if(Array.isArray(P.students)&&P.students.length>100){const cp=await confirmedPlan(env,s.sub),lim=planStuLimit(cp&&cp.name); /* adding students past the plan limit is refused; existing data may still be saved, edited or reduced */
+  if(P.students.length>lim){const old=await getJson(env,s.sub,'students');if(P.students.length>(Array.isArray(old)?old.length:0))throw new Err(403,'Plan limit reached ('+lim+' students). Upgrade your plan to add more students.',{code:'plan_limit',limit:lim})}}
  const S2={};for(const[k,v]of Object.entries(P)){const t=JSON.stringify(v===undefined?null:v);if(t.length>PART_MAX)throw new Err(413,`Section ${k} is too large`);S2[k]=t}
  const oldUsers=P.users!==undefined?await getJson(env,s.sub,'users'):null;
  const r=await commitParts(env,s.sub,{parts:S2,del:D,revs});
@@ -686,9 +706,9 @@ const bdtRate=env=>{const r=+(env&&env.BDT_RATE);return r>0&&r<1e4?r:122};
 const bdp=v=>{let d=String(v||'').replace(/\D/g,'');if(d.startsWith('880'))d=d.slice(2);if(d.length===10&&d[0]==='1')d='0'+d;return /^01[3-9]\d{8}$/.test(d)?d:''};
 const PLAN_USD={starter:29,institution:79,sovereign:199};
 const planUsd=item=>{const m=/^(starter|institution|sovereign) plan[^a-z]*(monthly|annual)/i.exec(String(item||''));return m?PLAN_USD[m[1].toLowerCase()]*(m[2].toLowerCase()==='annual'?10:1):null};
-const smsMatch=(o,x)=>(!o.sender||!x.sender||o.sender===x.sender)&&+o.amt>=x.taka-0.5;
+const PLAN_BDT={starter:799,institution:1999,sovereign:4999}; const planBdt=item=>{const m=/^(starter|institution|sovereign) plan[^a-z]*(monthly|annual)/i.exec(String(item||''));return m?PLAN_BDT[m[1].toLowerCase()]*(m[2].toLowerCase()==='annual'?10:1):null}; const smsMatch=(o,x)=>(!o.sender||!x.sender||o.sender===x.sender)&&+o.amt>=x.taka-0.5;
 async function checkout(C){
- const{b,env,ip}=C,gw=gateOf(b.gateway),loc=MANUAL_GW.has(gw),cur=loc?'BDT':'USD',usd=Math.round(+b.usd*100)/100,taka=Math.round(usd*bdtRate(env)),item=(str(b.item,100)+(cur==='USD'?'':' ['+cur+']')).trim();
+ const{b,env,ip}=C,gw=gateOf(b.gateway),loc=MANUAL_GW.has(gw),cur=loc?'BDT':'USD',usd=Math.round(+b.usd*100)/100,item=(str(b.item,100)+(cur==='USD'?'':' ['+cur+']')).trim(),taka=planBdt(item)||Math.round(usd*bdtRate(env));
  /* every check that can fail runs BEFORE anything is written, so a rejected payment costs no D1 write; the device keeps its own fallback record in localStorage */
  if(!gw||!(usd>0&&usd<=5000)||!item)throw new Err(400,'invalid payment');
  if(/plan/i.test(item)){const want=planUsd(item);if(want==null||Math.abs(want-usd)>0.001)throw new Err(400,'invalid plan or price')}
@@ -725,8 +745,8 @@ async function paySms(C){
   amt=+String(b.amount||(/(?:tk|bdt|৳)\.?\s*([\d,]+(?:\.\d{1,2})?)/i.exec(t)||[])[1]||'').replace(/,/g,''),
   sender=bdp(b.sender||(/(?:from|sender)\s*(?:a\/c)?\s*[:\-]?\s*(\+?(?:88)?01\d{9})/i.exec(t)||[])[1]);
  if(!/^[A-Z0-9]{8,14}$/.test(trx)||!(amt>0))throw new Err(400,'TrxID and amount not found');
- const r=await sq(env,"SELECT id,txid,usd FROM payments WHERE txid LIKE ? AND status='pending' LIMIT 1",trx+'|%').first();
- if(r){if(smsMatch({sender,amt},{sender:String(r.txid).split('|')[1],taka:Math.round(r.usd*bdtRate(env))})){await markPaid(C,r.id,'sms');return J({ok:true,matched:r.id})}
+ const r=await sq(env,"SELECT id,txid,usd,item FROM payments WHERE txid LIKE ? AND status='pending' LIMIT 1",trx+'|%').first();
+ if(r){if(smsMatch({sender,amt},{sender:String(r.txid).split('|')[1],taka:planBdt(r.item)||Math.round(r.usd*bdtRate(env))})){await markPaid(C,r.id,'sms');return J({ok:true,matched:r.id})}
   await tg(env,`⚠️ <b>Payment ${X(r.id)}</b>: SMS TrxID ${X(trx)} found but sender or amount differs (Tk ${amt}). Check it by hand.`);return J({ok:true,matched:false,reason:'mismatch'})}
  try{await env.KV.put('paysms:'+trx,JSON.stringify({sender,amt}),{expirationTtl:172800})}catch{}
  return J({ok:true,matched:false,stored:true})}
@@ -736,6 +756,9 @@ async function markPaid(C,id,by){
  await sq(env,"UPDATE payments SET status='paid' WHERE id=?",id).run();
  if(r.sub&&/plan/i.test(r.item)){const plan={name:r.item,gateway:r.gateway,status:'paid',ref:r.id,until:new Date(Date.now()+(/annual/i.test(r.item)?366:31)*864e5).toISOString()};try{await mutatePart(env,r.sub,'plan',()=>plan)}catch{}}
  await tg(env,`✅ <b>Payment ${X(id)} confirmed</b> by ${X(by)}\n${X(r.item)} · ${X(r.sub||'-')}`);return r}
+async function fRemind(C){
+ const{b,env,ip}=C;if(!env.MASTER_KEY||!eq(b.key||'',env.MASTER_KEY)){await fail(env,ip,'founder reminders');throw new Err(403,'rejected')}
+ return J({ok:true,sent:await planRemind(env)})}
 async function fPayment(C){
  const{b,env,ip}=C;if(!env.MASTER_KEY||!eq(b.key||'',env.MASTER_KEY)){await fail(env,ip,'founder payment');throw new Err(403,'rejected')}
  const id=str(b.id,40),st=b.status==='paid'?'paid':b.status==='rejected'?'rejected':'';if(!id||!st)throw new Err(400,'id and status are required');
@@ -1064,7 +1087,7 @@ const R={
  '/api/g/sync':gSync,'/api/g/login':gLogin,'/api/g/data':gData,'/api/g/send':gSend,'/api/g/reply':gReply,'/api/g/notice':gNotice,'/api/g/inbox':gInbox,'/api/g/otp':gOtp,'/api/g/quick':gQuick,'/api/g/react':gReact,'/api/g/seen':gSeen,'/api/g/typing':gTyping,'/api/push/key':pushKey,'/api/push/sub':pushSub,
  '/api/inst/search':instSearch,'/api/inst/publish':instPublish,'/api/admit/apply':admitApply,'/api/admit/inbox':admitInbox,
  '/api/ai':aiPaper,'/api/ai/report':aiReport,
- '/api/founder/system-alert':fAlert,'/api/founder/webhook':fAlert,'/api/founder/email-fallback':fMail,'/api/founder/health':fHealth,'/api/founder/payment':fPayment,'/api/founder/restore':fRestore};
+ '/api/founder/system-alert':fAlert,'/api/founder/webhook':fAlert,'/api/founder/email-fallback':fMail,'/api/founder/health':fHealth,'/api/founder/payment':fPayment,'/api/founder/plan-reminders':fRemind,'/api/founder/restore':fRestore};
 const BODY_LIMIT={'/api/ws/save':30e6,'/api/ws/create':30e6,'/api/g/sync':25e6,'/api/backup':26e6,'/api/founder/restore':1e5};
 const MUTATING=new Set(['/api/ws/save','/api/ws/create','/api/g/sync','/api/backup','/api/preferences']);
 async function api(req,env,ctx,u,ip,tenant){
@@ -1110,8 +1133,7 @@ const HERO='One Platform. Complete Control of Your Institution.';
 const INTRO='One workspace for enrollment, attendance, marks, fees and guardian communication. Every institution gets its own isolated subdomain and starts completely empty.';
 const PAYTXT='Pay with bKash, Nagad, Rocket, SSLCommerz, Visa, Mastercard, Stripe, PayPal, Bitcoin or USDT Vault.';
 const PRODS=[['Enrollment','Admissions, student profiles and guardian records.'],['Attendance Support','ID-card scan logs for students and ustads, with guardian alerts.'],['Learning Management','Routines, homework diaries and teacher feedback.'],['Assessment','Digital marksheets and instant merit lists.'],['Connected Intelligence','AI question papers, syllabus outlines and lesson plans.'],['Analytics and Insights','Progress graphs and class averages.'],['Finance Vault','Encrypted ledger, fee collection and receipts.'],['Secure Messaging','Guardian to teacher conversations.'],['Staff Management','Ustad records, salaries and credentials.'],['Security Center','Role-based access, tamper detection and threat alerts.']];
-const PLANS=[['Free','Up to 200 student records',0,['Student and staff directory','Attendance and marksheets','Isolated workspace and unique ID','Community support']],['Starter','Up to 500 students',29,['Student and staff directory','Attendance','Marksheets']],['Institution','Up to 1,500 students',79,['Everything in Starter','AI paper generator','Encrypted finance vault','Role-based team access']],['Sovereign','Unlimited, multi-campus',199,['Everything in Institution','Custom domain','Priority support']]];
-const SOLS=[['Schools','Class routines, homework diaries, guardian alerts and report cards.'],['Madrassas','Hostel and meal tracking, Quran progress, Sadaqah ledger and ustad records.'],['Coaching centers','Batch attendance, mock tests and recurring fees.'],['Colleges','Departments, semester results, fee collection and staff payroll.'],['Universities','Faculty, department, program and batch hierarchy at large scale.']];
+const PLANS=[['Free','Up to 100 student records',0,['Student and staff directory','Attendance and marksheets','Isolated workspace and unique ID','Community support']],['Starter','Up to 500 students',29,['Student and staff directory','Attendance','Marksheets']],['Institution','Up to 1,500 students',79,['AI paper generator','Encrypted finance vault','Role-based team access']],['Sovereign','Unlimited, multi-campus',199,['Custom domain','Priority support']]]; const SOLS=[['Schools','Class routines, homework diaries, guardian alerts and report cards.'],['Madrassas','Hostel and meal tracking, Quran progress, Sadaqah ledger and ustad records.'],['Coaching centers','Batch attendance, mock tests and recurring fees.'],['Colleges','Departments, semester results, fee collection and staff payroll.'],['Universities','Faculty, department, program and batch hierarchy at large scale.']];
 const ALLSOL=[['Student records','Profiles, guardians, residence and results.'],['Staff management','Credentials, salaries and joining dates.'],['Financial ledgers','Income, expenses, dues, loans and receipts.'],['Institutional hierarchies','Campus, faculty, department, class and batch.']];
 const OSL=[['Data layer','One isolated workspace per institution, stored under its own subdomain.'],['Identity layer','Four roles with separate permissions and token sessions that end on inactivity.'],['Intelligence layer','AI papers, lesson plans, merit lists and progress analytics.'],['Communication layer','Guardian alerts under your branded sender name and secure messaging.']];
 const HELP=[['Set up your institution','Sign up, choose a subdomain, and save the recovery code shown once at the end.'],['Add team members','Settings and team: add teachers, accountants and guardians with their roles.'],['Add students and staff','Lists start empty. Press Add on Students or Staff.'],['Enter marks','Marksheets: type a subject, enter scores, and the merit list updates.'],['Collect fees','Finance vault lists students with a fee set. Press Collect to log it and print a receipt.'],['Locked out?','Contact the QVMPXT founder. A master key regenerates the administrator password.']];
@@ -1135,7 +1157,7 @@ const pg=(path,v,hash,name,h1,desc,body,pr,cf)=>({path,v,hash,name,h1,pr:pr||'0.
 const PAGES=[
  pg('/','home','','Home',HERO,'ClasSphera by QVMPXT is one secure platform for schools, madrasahs, coaching centers, colleges and universities: student records, attendance, marksheets, AI question papers, finance vault and guardian messaging.',()=>`<h1 class="text-3xl font-extrabold">${E(HERO)}</h1><p class="mt-3 text-sm mu">${E(BRAND)} · ${E(TAG)}</p><p class="mt-5 mu max-w-xl">${E(INTRO)}</p>${H2('Everything an institution runs on')}${grid(PRODS,'sm:grid-cols-2 lg:grid-cols-3')}${H2('Built for isolation and trust')}${grid(TRUST)}${H2('Pricing')}${plans()}`,'1.0','weekly'),
  pg('/login','home','login','Login','Log in to your institution workspace','ClasSphera by QVMPXT login: sign in to your school, madrasah, college or university workspace with two-step verification, passkeys and authenticator codes.',()=>`${H1('Login')}<p class="max-w-2xl">Sign in to your institution workspace with your institution address, phone number, email and secure password. New devices are verified with a one-time code, an authenticator app or a fingerprint / Face ID passkey.</p>`,'0.9','monthly'),
- pg('/signup','home','signup','Sign Up','Create your institution workspace','Sign up for ClasSphera by QVMPXT in three steps and get an isolated, encrypted workspace with its own subdomain, free for up to 200 student records.',()=>`${H1('Sign Up')}<p class="max-w-2xl">Create your institution in three steps: institution details, address and administrator. Every workspace gets its own subdomain, a unique secure ID and a recovery code, and starts completely empty.</p>${plans()}`,'0.9','monthly'),
+ pg('/signup','home','signup','Sign Up','Create your institution workspace','Sign up for ClasSphera by QVMPXT in three steps and get an isolated, encrypted workspace with its own subdomain, free for up to 100 student records.',()=>`${H1('Sign Up')}<p class="max-w-2xl">Create your institution in three steps: institution details, address and administrator. Every workspace gets its own subdomain, a unique secure ID and a recovery code, and starts completely empty.</p>${plans()}`,'0.9','monthly'),
  pg('/guardian-signup','guard','guardian-signup','Guardian Sign Up','Guardian sign in and registration','ClasSphera by QVMPXT guardian portal: parents see only their own child’s attendance, marks, fees, notices and secure messages with the school.',()=>`${H1('Guardian Sign Up')}<p class="max-w-2xl">Parents and guardians sign in with the institution name, the student’s admission ID, the registered mobile number and a secret PIN given by the institution. You see only your own child’s records.</p>`,'0.8','monthly'),
  pg('/student-signup','guard','student-signup','Student Sign Up','Student sign in and registration','ClasSphera by QVMPXT student portal: students open their own routine, homework, marksheet and Quran progress with an admission ID and PIN.',()=>`${H1('Student Sign Up')}<p class="max-w-2xl">Students sign in with the institution name, admission ID or roll number and a secret PIN. The student portal shows only your own routine, homework, marks and progress.</p>`,'0.8','monthly'),
  pg('/connect','connect','','Connect Us','Connect with the ClasSphera founder','Contact ClasSphera by QVMPXT: founder phone, WhatsApp and email, help and support, feedback, security guidelines and terms.',()=>`${H1('Connect Us')}<div class="glass p-5 max-w-xl"><p><b>${E(FOUNDER)}</b> · Sovereign Founder, QVMPXT</p><p class="mt-2"><a href="mailto:${FOUNDER_MAIL}">${FOUNDER_MAIL}</a></p><p><a href="tel:${FOUNDER_PHONE}">${FOUNDER_PHONE}</a></p></div>${H2('Help & support')}${grid(HELP)}`,'0.8','monthly'),
@@ -1145,7 +1167,7 @@ const PAGES=[
  ...ENT.map(x=>pg('/enterprise/'+x[0],'enterprise','enterprise:'+x[0],x[1],x[1],`${BRAND} Enterprise Suite: ${x[2]}`,()=>`${H1(x[1])}<p class="max-w-2xl">${E(x[2])}</p><p class="mt-4"><a href="/enterprise">All Enterprise Suite modules</a></p>`,'0.7','monthly')),
  pg('/products','products','','Products','Products','Ten connected ClasSphera modules: enrollment, attendance, learning management, assessment, AI tools, analytics, finance vault, messaging, staff and security.',()=>`${H1('Products')}${grid(PRODS,'sm:grid-cols-2 lg:grid-cols-3')}`,'0.9'),
  pg('/solutions','sol','','Solutions','Solutions for every institution','ClasSphera fits schools, madrasahs, coaching centers, colleges and universities with student records, staff management, financial ledgers and institutional hierarchies.',()=>`${H1('Solutions')}${grid(SOLS,'md:grid-cols-2 lg:grid-cols-3')}${H2('Included in every solution')}${grid(ALLSOL,'sm:grid-cols-2 lg:grid-cols-4')}`,'0.9'),
- pg('/pricing','price','','Pricing','Pricing','ClasSphera Free plan up to 200 student records, then Starter $29, Institution $79 and Sovereign $199 per month. Pay with bKash, Nagad, Rocket, SSLCommerz, cards, PayPal, Bitcoin or USDT.',()=>`${H1('Pricing')}${plans()}`,'0.9'),
+ pg('/pricing','price','','Pricing','Pricing','ClasSphera Free plan up to 100 student records, then Starter $29, Institution $79 and Sovereign $199 per month. Pay with bKash, Nagad, Rocket, SSLCommerz, cards, PayPal, Bitcoin or USDT.',()=>`${H1('Pricing')}${plans()}`,'0.9'),
  pg('/connected-os','os','','Connected OS','Connected OS','The ClasSphera Connected OS: data, identity, intelligence and communication layers working together for every institution.',()=>`${H1('Connected OS')}${grid(OSL)}`,'0.7'),
  pg('/help','help','','Help Center','Help center','Set up your institution, add team members, students and staff, enter marks, collect fees and recover administrator access in ClasSphera.',()=>`${H1('Help center')}<div class="space-y-3">${HELP.map(x=>`<div class="glass p-4"><h2 class="font-bold">${E(x[0])}</h2><p class="mt-2 text-sm mu">${E(x[1])}</p></div>`).join('')}</div>`,'0.6'),
  pg('/feedback','fb','','Feedback Portal','Feedback portal','Send ideas, problems or praise privately to the ClasSphera founder together with your institution’s details.',()=>`${H1('Feedback portal')}<p class="text-sm mb-4 mu">Sent privately to the founder with your institution’s details.</p>`,'0.3','yearly'),
@@ -1299,7 +1321,8 @@ async function site(req,env,ctx,u,host,main,tenant){
 /* housekeeping: runs from a Cron trigger when this file is deployed as a standalone Worker */
 async function maintenance(env){
  await migrate(env);const d90=new Date(Date.now()-90*864e5).toISOString(),d180=new Date(Date.now()-180*864e5).toISOString();
- await env.DB.batch([sq(env,"DELETE FROM events WHERE at<? AND kind IN ('audit','sync')",d90),sq(env,'DELETE FROM alerts WHERE at<?',d90),sq(env,'DELETE FROM kvx WHERE exp>0 AND exp<?',Math.floor(Date.now()/1000)),sq(env,'DELETE FROM portal_inbox WHERE at<?',Date.now()-90*864e5),sq(env,'DELETE FROM portal_out WHERE at<?',Date.now()-90*864e5),sq(env,'DELETE FROM trusted WHERE last_seen<?',d180),sq(env,'DELETE FROM audit WHERE at<?',new Date(Date.now()-365*864e5).toISOString())])}
+ await env.DB.batch([sq(env,"DELETE FROM events WHERE at<? AND kind IN ('audit','sync')",d90),sq(env,'DELETE FROM alerts WHERE at<?',d90),sq(env,'DELETE FROM kvx WHERE exp>0 AND exp<?',Math.floor(Date.now()/1000)),sq(env,'DELETE FROM portal_inbox WHERE at<?',Date.now()-90*864e5),sq(env,'DELETE FROM portal_out WHERE at<?',Date.now()-90*864e5),sq(env,'DELETE FROM trusted WHERE last_seen<?',d180),sq(env,'DELETE FROM audit WHERE at<?',new Date(Date.now()-365*864e5).toISOString())]);
+ await planRemind(env).catch(e=>console.error('plan reminders',e&&e.message))}
 
 export default{
  async fetch(req,env,ctx){
