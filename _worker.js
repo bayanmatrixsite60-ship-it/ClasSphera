@@ -17,7 +17,7 @@
    ROUTES     see R{} below. Subdomains <name>.<root> serve the app shell and open that institution's secure login. */
 
 const SITE='https://classphera.pages.dev',APEX='classphera.pages.dev',LASTMOD='2026-11-12';
-const APP_V='2.8.0',API_SCHEMA='2.8.0',DATA_SCHEMA=3,MIN_CLIENT_MAJOR=2;
+const APP_V='2.8.1',API_SCHEMA='2.8.0',DATA_SCHEMA=3,MIN_CLIENT_MAJOR=2;
 const TAG='One platform. Complete control. Zero compromise.',BRAND='ClasSphera by QVMPXT';
 const FOUNDER_MAIL='marufchowdhury579@gmail.com',FOUNDER_PHONE='+8801347272307',FOUNDER='M MARUF CHOWDHURY';
 const ROOTS=[APEX,'classphera.com','classsphera.com'];
@@ -134,6 +134,11 @@ const SCHEMA=[
 ['2.4',['DROP INDEX IF EXISTS idx_kvx_exp']], /* an index doubles the write cost of every put; the table is small and purged, so a scan is cheaper */
 ['2.5',['CREATE TABLE IF NOT EXISTS portal_out(id INTEGER PRIMARY KEY AUTOINCREMENT,sub TEXT NOT NULL,sid TEXT NOT NULL,k TEXT NOT NULL DEFAULT \'m\',x TEXT NOT NULL,u INTEGER NOT NULL DEFAULT 0,at INTEGER NOT NULL)','CREATE INDEX IF NOT EXISTS idx_portal_out ON portal_out(sub,sid,id)']] /* teacher replies (k=m) and notices (k=b, sid=*) that guardians read live through /api/g/data */
 ,['2.6',["CREATE TABLE IF NOT EXISTS notifications(id TEXT PRIMARY KEY,workspace_sub TEXT NOT NULL,recipient_id TEXT NOT NULL,title TEXT NOT NULL,body TEXT NOT NULL,type TEXT,action_url TEXT,is_read INTEGER DEFAULT 0,created_at DATETIME)",'CREATE INDEX IF NOT EXISTS idx_notifications_rcpt ON notifications(workspace_sub,recipient_id,created_at)']] /* in-house guardian alerts (attendance, reports, receipts): written by /api/notify*, read live by the guardian through /api/g/data */
+,['2.7',['ALTER TABLE portal_out ADD COLUMN meta TEXT','ALTER TABLE portal_inbox ADD COLUMN meta TEXT',
+  'CREATE TABLE IF NOT EXISTS portal_rx(sub TEXT NOT NULL,sid TEXT NOT NULL,k TEXT NOT NULL,at INTEGER NOT NULL,who TEXT NOT NULL,e TEXT NOT NULL,PRIMARY KEY(sub,sid,k,at,who))',
+  'CREATE TABLE IF NOT EXISTS portal_seen(sub TEXT NOT NULL,sid TEXT NOT NULL,who TEXT NOT NULL,dv INTEGER NOT NULL DEFAULT 0,seen INTEGER NOT NULL DEFAULT 0,ty INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(sub,sid,who))',
+  'CREATE TABLE IF NOT EXISTS push_subs(id TEXT PRIMARY KEY,sub TEXT NOT NULL,who TEXT NOT NULL,sid TEXT NOT NULL DEFAULT \'\',ep TEXT NOT NULL,created TEXT)',
+  'CREATE INDEX IF NOT EXISTS idx_push_subs ON push_subs(sub,who,sid)']] /* chat extras: reply quotes (meta), reactions, delivered/read/typing state, web-push subscriptions */
 ];
 let MIGRATED=null;
 function migrate(env){
@@ -236,23 +241,35 @@ const THK=/^[A-Za-z0-9+_.|-]{1,100}$/,THPAV=/^data:image\/[a-z0-9.+-]+;base64,[A
 const thParty=(k,arr,me)=>{if(k.indexOf('|')>=0){const p=k.split('|');return p.length===2&&p.includes(me)}return!Array.isArray(arr)||!arr.length||arr.some(m=>m&&m.f===me)};
 function thView(raw,me){try{const t=JSON.parse(raw);if(!t||typeof t!=='object'||Array.isArray(t))return'{}';const o={},keys=[],em=new Set([me]);
  for(const k of Object.keys(t)){if(k.slice(0,2)==='__'||!Array.isArray(t[k]))continue;if(k.indexOf('|')>=0?thParty(k,null,me):t[k].some(m=>m&&m.f===me)){o[k]=t[k];keys.push(k);k.split('|').forEach(e=>em.add(e))}}
- const rd={},cl={},pv={};
- for(const k of keys){const r=t.__rd&&t.__rd[k];if(r&&typeof r==='object')rd[k]=r;const c=t.__clr&&t.__clr[k];if(c&&typeof c==='object'&&c[me]!==undefined)cl[k]={[me]:c[me]}}
+ const rd={},cl={},pv={},dl={},ty={};
+ for(const k of keys){const r=t.__rd&&t.__rd[k];if(r&&typeof r==='object')rd[k]=r;const c=t.__clr&&t.__clr[k];if(c&&typeof c==='object'&&c[me]!==undefined)cl[k]={[me]:c[me]};const d=t.__dl&&t.__dl[k];if(d&&typeof d==='object')dl[k]=d;const y=t.__ty&&t.__ty[k];if(y&&typeof y==='object'){const z={};for(const e of Object.keys(y))if(Date.now()-(+y[e]||0)<30000)z[e]=y[e];if(Object.keys(z).length)ty[k]=z}}
  em.forEach(e=>{if(t.__pav&&typeof t.__pav[e]==='string')pv[e]=t.__pav[e]});
- o.__rd=rd;o.__clr=cl;o.__pav=pv;return JSON.stringify(o)}catch{return'{}'}}
-async function thMerge(env,sub,inc,me,role){const st=await getJson(env,sub,'th'),S0=st&&typeof st==='object'&&!Array.isArray(st)?st:{};
+ o.__rd=rd;o.__clr=cl;o.__pav=pv;o.__dl=dl;o.__ty=ty;return JSON.stringify(o)}catch{return'{}'}}
+/* ---- chat extras: emoji reactions are merged per person, so reacting to someone else's message is allowed ---- */
+const RXE=/^[\p{Extended_Pictographic}\u200d\ufe0f]{1,12}$/u;
+const nrx=m=>{const o={...m};delete o.rx;return JSON.stringify(o)};
+function mergeRx(srv,inc,me){const o={};
+ if(isO(srv))for(const e of Object.keys(srv)){const a=Array.isArray(srv[e])?srv[e].filter(x=>typeof x==='string'&&x!==me):[];if(a.length)o[e]=a.slice(0,200)}
+ if(isO(inc))for(const e of Object.keys(inc)){if(!RXE.test(e)||!Array.isArray(inc[e])||!inc[e].includes(me))continue;(o[e]=o[e]||[]).push(me)}
+ const ks=Object.keys(o);if(!ks.length||ks.length>12)return ks.length?Object.fromEntries(ks.slice(0,12).map(k=>[k,o[k]])):undefined;return o}
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+async function thMerge(env,sub,inc,me,role,note){const st=await getJson(env,sub,'th'),S0=st&&typeof st==='object'&&!Array.isArray(st)?st:{};
  if(!inc||typeof inc!=='object'||Array.isArray(inc)||Object.keys(inc).length>3000)return S0;
- const out={...S0},ok=[];out.__rd={...(S0.__rd||{})};out.__clr={...(S0.__clr||{})};out.__pav={...(S0.__pav||{})};
+ const out={...S0},ok=[];out.__rd={...(S0.__rd||{})};out.__clr={...(S0.__clr||{})};out.__pav={...(S0.__pav||{})};out.__dl={...(S0.__dl||{})};out.__ty={...(S0.__ty||{})};
  for(const k of Object.keys(inc)){if(k.slice(0,2)==='__'||!THK.test(k)||!Array.isArray(inc[k]))continue;
   const sa=Array.isArray(S0[k])?S0[k]:[],ia=inc[k];if(!thParty(k,sa,me)||ia.length>20000)continue;
   if(!ia.every(m=>m&&typeof m==='object'&&!Array.isArray(m)&&typeof m.f==='string'))continue;
-  if(JSON.stringify(sa.filter(m=>m&&m.f!==me))!==JSON.stringify(ia.filter(m=>m.f!==me)))continue;
-  out[k]=ia.map(m=>m.f===me?{...m,r:role}:m);ok.push(k)}
- for(const f of['__rd','__clr']){const src=inc[f];if(!src||typeof src!=='object')continue;
+  if(JSON.stringify(sa.filter(m=>m&&m.f!==me).map(nrx))!==JSON.stringify(ia.filter(m=>m.f!==me).map(nrx)))continue;
+  const sx=new Map();for(const m of sa)if(m&&m.rx)sx.set(m.f+'|'+m.at,m.rx);
+   out[k]=ia.map(m=>{const x=m.f===me?{...m,r:role}:{...m};if(m.f===me&&m.rq!==undefined){const q=m.rq;if(isO(q)&&str(q.x,200))x.rq={x:str(q.x,200),n:str(q.n,60)};else delete x.rq}const rx=mergeRx(sx.get(m.f+'|'+m.at),m.rx,me);if(rx)x.rx=rx;else delete x.rx;return x});
+   if(note&&k.indexOf('|')>=0&&ia.filter(m=>m.f===me).length>sa.filter(m=>m&&m.f===me).length)note.push(k.split('|').find(e=>e!==me)||'');ok.push(k)}
+ for(const f of['__rd','__clr','__dl']){const src=inc[f];if(!src||typeof src!=='object')continue;
   for(const k of Object.keys(src)){if(!THK.test(k)||!Array.isArray(out[k])||!thParty(k,out[k],me))continue;const v=src[k]&&src[k][me];if(typeof v!=='number'||!isFinite(v))continue;
    out[f][k]={...(out[f][k]||{}),[me]:Math.max(0,Math.min(out[k].length,Math.floor(v)))}}}
- const a=inc.__pav&&inc.__pav[me];if(typeof a==='string'&&THPAV.test(a))out.__pav[me]=a;
- for(const k of ok)for(const f of['__rd','__clr']){const r=out[f][k];if(r&&typeof r==='object')for(const e of Object.keys(r))if(+r[e]>out[k].length)r[e]=out[k].length}
+ {const ty=inc.__ty,now=Date.now();if(isO(ty))for(const k of Object.keys(ty)){if(!THK.test(k)||!Array.isArray(out[k])||!thParty(k,out[k],me))continue;const v=ty[k]&&ty[k][me];if(typeof v!=='number'||!isFinite(v))continue;out.__ty[k]={...(out.__ty[k]||{}),[me]:Math.min(now,Math.max(now-30000,Math.floor(v)))}}
+  for(const k of Object.keys(out.__ty)){const o=out.__ty[k];if(!isO(o)){delete out.__ty[k];continue}for(const e of Object.keys(o))if(now-(+o[e]||0)>30000)delete o[e];if(!Object.keys(o).length)delete out.__ty[k]}}
+  const a=inc.__pav&&inc.__pav[me];if(typeof a==='string'&&THPAV.test(a))out.__pav[me]=a;
+ for(const k of ok)for(const f of['__rd','__clr','__dl']){const r=out[f][k];if(r&&typeof r==='object')for(const e of Object.keys(r))if(+r[e]>out[k].length)r[e]=out[k].length}
  return out}
 async function conflictResp(env,sub,keys,ph){const rows=await readParts(env,sub,keys),f=[],rv=[];for(const k of keys){const x=rows.get(k);f.push(JSON.stringify(k)+':'+(x&&!x.deleted&&x.raw?(k==='th'?thView(x.raw,ph):x.raw):'null'));rv.push(JSON.stringify(k)+':'+(x?x.rev:0))}return JR('{"error":"conflict","remote":{'+f.join(',')+'},"revs":{'+rv.join(',')+'}}',409)}
 function checkUsers(us){
@@ -272,9 +289,9 @@ const NO_DELETE=new Set(['users','inst','led','id','created','students','staff',
 const ROLE_ALLOW={Accountant:new Set(['led','th','xm']),Guardian:new Set(['th']),Supervisor:new Set(['th','xm','sub'])};
 function canWrite(role,k){if(k==='id'||k==='created')return false;if(role==='Admin')return true;if(ROLE_ALLOW[role])return ROLE_ALLOW[role].has(k);if(role==='Teacher')return!ADMIN_ONLY.has(k)&&k!=='led'&&k!=='staff';return false}
 async function confirmedPlan(env,sub){
- const r=await sq(env,"SELECT item,gateway,at FROM payments WHERE sub=? AND status='paid' AND item LIKE '%plan%' ORDER BY at DESC LIMIT 1",sub).first();if(!r)return null;
+ const r=await sq(env,"SELECT id,item,gateway,at FROM payments WHERE sub=? AND status='paid' AND item LIKE '%plan%' ORDER BY at DESC LIMIT 1",sub).first();if(!r)return null;
  const until=new Date(r.at).getTime()+(/annual/i.test(r.item)?366:31)*864e5;if(until<Date.now())return null;
- return{name:r.item,gateway:r.gateway,status:'paid',until:new Date(until).toISOString()}}
+ return{name:r.item,gateway:r.gateway,status:'paid',ref:r.id,until:new Date(until).toISOString()}}
 
 /* ───────────── non-destructive data migrations + snapshots ───────────── */
 const DM=[
@@ -422,8 +439,9 @@ async function wsLoad(C){
  const cr=isO(b.revs)?b.revs:null;
  const pack=(rows,gone)=>{const f=[],rv={};for(const[k,x]of rows){if(x.deleted||!x.raw||hiddenFor(s.role,k))continue;f.push(JSON.stringify(k)+':'+(k==='users'&&s.role!=='Admin'?redactUsers(x.raw,s.ph):k==='th'?thView(x.raw,s.ph):x.raw));rv[k]=x.rev}return{f,rv,gone}};
  if(!cr){const rows=await readParts(env,s.sub,null);if(!rows.size)throw new Err(404,'workspace not found');const p=pack(rows,[]);return JR('{"ws":{'+p.f.join(',')+'},"revs":'+JSON.stringify(p.rv)+'}')}
- const meta=(await sq(env,'SELECT k,rev,deleted FROM ws_parts WHERE sub=?',s.sub).all()).results||[],live=[],gone=[];
- for(const r of meta){if(hiddenFor(s.role,r.k))continue;const c=cr[r.k];if(r.deleted){if(c!==undefined&&+c!==r.rev)gone.push(r.k)}else if(+c!==r.rev)live.push(r.k)}
+ const wt=Math.min(20000,Math.max(0,+b.wait||0)),w0=Date.now();let live=[],gone=[];
+ for(;;){const meta=(await sq(env,'SELECT k,rev,deleted FROM ws_parts WHERE sub=?',s.sub).all()).results||[];live=[];gone=[];for(const r of meta){if(hiddenFor(s.role,r.k))continue;const c=cr[r.k];if(r.deleted){if(c!==undefined&&+c!==r.rev)gone.push(r.k)}else if(+c!==r.rev)live.push(r.k)}
+  if(live.length||gone.length||!wt||Date.now()-w0>=wt)break;await sleep(2000)}
  if(!live.length&&!gone.length)return JR('{"parts":{},"revs":{},"gone":[]}');
  const p=pack(live.length?await readParts(env,s.sub,live):new Map(),gone);
  return JR('{"parts":{'+p.f.join(',')+'},"revs":'+JSON.stringify(p.rv)+',"gone":'+JSON.stringify(gone)+'}')}
@@ -441,12 +459,13 @@ async function wsSave(C){
  if(!Object.keys(P).length&&!D.length)return J({ok:true,revs:{},denied});
  if(P.users!==undefined){const e=checkUsers(P.users);if(e)throw new Err(400,e)}
  if(P.inst!==undefined&&(!isO(P.inst)||str(P.inst.name,120).length<2))throw new Err(400,'Institution name is required');
- if(P.th!==undefined)P.th=await thMerge(env,s.sub,P.th,s.ph,s.role);
+ const pn=[];if(P.th!==undefined)P.th=await thMerge(env,s.sub,P.th,s.ph,s.role,pn);
  if(P.plan!==undefined){const cp=await confirmedPlan(env,s.sub);P.plan=cp||(isO(P.plan)?{name:str(P.plan.name,60),gateway:str(P.plan.gateway,30),status:'pending'}:null)}
  const S2={};for(const[k,v]of Object.entries(P)){const t=JSON.stringify(v===undefined?null:v);if(t.length>PART_MAX)throw new Err(413,`Section ${k} is too large`);S2[k]=t}
  const oldUsers=P.users!==undefined?await getJson(env,s.sub,'users'):null;
  const r=await commitParts(env,s.sub,{parts:S2,del:D,revs});
  if(r.conflict){const cur=await partMeta(env,s.sub,[...Object.keys(S2),...D]),cf=[...Object.keys(S2),...D].filter(k=>(cur.get(k)?cur.get(k).rev:0)!==(+revs[k]||0));return conflictResp(env,s.sub,cf.length?cf:r.conflict,s.ph)}
+ if(pn.length)bg(C,Promise.all([...new Set(pn)].filter(Boolean).map(p=>pushTo(env,s.sub,'s',p))));
  if(P.users!==undefined){
   await env.DB.batch(idxStmts(env,s.sub,P.users));
   if(Array.isArray(oldUsers)){const nm=new Map(P.users.map(u=>[u.email,u])),t=String(nowS());
@@ -658,21 +677,64 @@ async function tenantAuth(C,sub,roles){
  return{via:'key'}}
 
 /* ───────────── payments ───────────── */
+/* BDT wallets (bKash, Nagad, Rocket...) are paid in Taka to the merchant number and verified by sender + TrxID + amount; every other gateway is priced in USD.
+   Plans switch on only when a payment row is 'paid': founder confirmation, Stripe webhook, or a matching forwarded wallet SMS (/api/pay/sms).
+   Optional env: PAY_NO (receiving number), BDT_RATE (Taka per USD, default 122), PAY_HOOK_KEY (16+ chars, secret for the SMS forwarder). */
+const MANUAL_GW=new Set(['bKash','Nagad','Rocket','Upay','SureCash','SSLCommerz']);
+const PAY_NO=env=>String((env&&env.PAY_NO)||'01812410928');
+const bdtRate=env=>{const r=+(env&&env.BDT_RATE);return r>0&&r<1e4?r:122};
+const bdp=v=>{let d=String(v||'').replace(/\D/g,'');if(d.startsWith('880'))d=d.slice(2);if(d.length===10&&d[0]==='1')d='0'+d;return /^01[3-9]\d{8}$/.test(d)?d:''};
+const PLAN_USD={starter:29,institution:79,sovereign:199};
+const planUsd=item=>{const m=/^(starter|institution|sovereign) plan[^a-z]*(monthly|annual)/i.exec(String(item||''));return m?PLAN_USD[m[1].toLowerCase()]*(m[2].toLowerCase()==='annual'?10:1):null};
+const smsMatch=(o,x)=>(!o.sender||!x.sender||o.sender===x.sender)&&+o.amt>=x.taka-0.5;
 async function checkout(C){
- const{b,env,ip}=C,gw=gateOf(b.gateway),cur=/^[A-Z]{3}$/.test(String(b.cur||''))?b.cur:'USD',usd=Math.round(+b.usd*100)/100,item=(str(b.item,100)+(cur==='USD'?'':' ['+cur+']')).trim();
+ const{b,env,ip}=C,gw=gateOf(b.gateway),loc=MANUAL_GW.has(gw),cur=loc?'BDT':'USD',usd=Math.round(+b.usd*100)/100,taka=Math.round(usd*bdtRate(env)),item=(str(b.item,100)+(cur==='USD'?'':' ['+cur+']')).trim();
  /* every check that can fail runs BEFORE anything is written, so a rejected payment costs no D1 write; the device keeps its own fallback record in localStorage */
- if(!gw||!(usd>0&&usd<=(cur==='USD'?5000:5e6))||!item)throw new Err(400,'invalid payment');
+ if(!gw||!(usd>0&&usd<=5000)||!item)throw new Err(400,'invalid payment');
+ if(/plan/i.test(item)){const want=planUsd(item);if(want==null||Math.abs(want-usd)>0.001)throw new Err(400,'invalid plan or price')}
+ let sender='',trx='';
+ if(loc){sender=bdp(b.sender);trx=String(b.txid||'').trim().toUpperCase();
+  if(!sender)throw new Err(400,'Enter the mobile number you paid from (01XXXXXXXXX)');
+  if(!/^[A-Z0-9]{8,14}$/.test(trx))throw new Err(400,'Enter the TrxID from your payment SMS (8 to 14 letters or numbers)')}
  if(await hit(env,'pay:'+ip,20,3600))throw new Err(429,'rate limited');
- const id='PAY-'+rnd(5).toUpperCase(),s=await auth(C),sub=s?s.sub:(wsn(b.sub)||null),txid=str(b.txid,80);let url=null;
+ const id='PAY-'+rnd(5).toUpperCase(),s=await auth(C),sub=s?s.sub:(wsn(b.sub)||null),txid=loc?trx+'|'+sender:str(b.txid,80);let url=null;
+ if(/plan/i.test(item)&&!sub)throw new Err(401,'Sign in to your workspace to buy a plan');
+ if(loc){let dup=null;try{dup=await sq(env,"SELECT id FROM payments WHERE txid LIKE ? AND status IN ('pending','paid') LIMIT 1",trx+'|%').first()}catch{}
+  if(dup)throw new Err(409,'This TrxID was already submitted')}
  try{await sq(env,'INSERT INTO payments(id,sub,gateway,item,usd,txid,status,at) VALUES(?,?,?,?,?,?,?,?)',id,sub,gw,item,usd,txid,'pending',iso()).run()}
  catch(e){throw new Err(503,'The server could not record this payment right now. The details were kept on this device.',{fallback:'local'})}
  if(gw==='Stripe'&&env.STRIPE_KEY){try{const r=await fetch('https://api.stripe.com/v1/checkout/sessions',{method:'POST',headers:{authorization:'Bearer '+env.STRIPE_KEY,'content-type':'application/x-www-form-urlencoded'},body:new URLSearchParams({mode:'payment','line_items[0][price_data][currency]':cur.toLowerCase(),'line_items[0][price_data][product_data][name]':item,'line_items[0][price_data][unit_amount]':String(Math.round(usd*100)),'line_items[0][quantity]':'1',success_url:C.u.origin+'/#dash',cancel_url:C.u.origin+'/#dash','metadata[payment_id]':id})});url=(await r.json()).url||null}catch{url=null}}
- await tg(env,`💳 <b>Payment ${id}</b>\n${X(item)} · ${cur==='USD'?'$':cur+' '}${usd}\n${X(gw)} · TxID ${X(txid||'-')}\nWorkspace: ${X(sub||'visitor')}${b.institutionId?' · '+X(str(b.institutionId,40)):''}`);
- return J({status:'pending',id,gateway:gw,url,message:url?'Redirecting to secure checkout':'Payment recorded. Access activates once the founder verifies it.'})}
+ /* the wallet SMS may have been forwarded before this form was submitted */
+ let paid=false;
+ if(loc){try{const m=await env.KV.get('paysms:'+trx);if(m&&smsMatch(JSON.parse(m),{sender,taka})){await markPaid(C,id,'sms');paid=true}}catch{}}
+ await tg(env,`💳 <b>Payment ${id}</b>${paid?' ✅ auto-verified':''}\n${X(item)} · ${cur==='BDT'?'৳'+taka+' (≈$'+usd+')':'$'+usd}\n${X(gw)} · TxID ${X(loc?trx:(txid||'-'))}${loc?' · from '+X(sender):''}\nWorkspace: ${X(sub||'visitor')}${b.institutionId?' · '+X(str(b.institutionId,40)):''}`);
+ return J({status:paid?'verified':'pending',id,ref:id,gateway:gw,currency:cur,amount:cur==='BDT'?taka:usd,payTo:loc?PAY_NO(env):undefined,url,message:paid?'Payment confirmed':url?'Redirecting to secure checkout':loc?'Payment received for verification. Your plan turns on as soon as the transfer to '+PAY_NO(env)+' is confirmed.':'Payment recorded. Access activates once the founder verifies it.'})}
+async function checkoutVerify(C){
+ const{b,env,ip}=C;if(await hit(env,'payv:'+ip,240,3600))throw new Err(429,'rate limited');
+ const id=str(b.ref,40).toUpperCase();if(!/^PAY-[A-Z0-9]{4,12}$/.test(id))throw new Err(400,'invalid reference');
+ const r=await sq(env,'SELECT id,sub,status FROM payments WHERE id=?',id).first();if(!r)throw new Err(404,'payment not found');
+ const s=await auth(C),sub=s?s.sub:(wsn(b.sub)||null);if(!sub||sub!==r.sub)throw new Err(403,'unauthorized');
+ const st=r.status==='paid'?'verified':r.status==='rejected'?'rejected':'pending';
+ return J({status:st,ref:r.id,message:st==='verified'?'Payment confirmed':st==='rejected'?'The payment was rejected. No plan was activated.':'Still waiting for confirmation'})}
+/* wallet SMS forwarder: your phone forwards the "money received" SMS (bKash, Nagad, Rocket) here; a payment is confirmed only when TrxID, sender and amount all match */
+async function paySms(C){
+ const{b,env,ip}=C,key=env.PAY_HOOK_KEY;if(!key||String(key).length<16)throw new Err(503,'SMS verification is not configured');
+ if(!eq(String(b.key||C.req.headers.get('x-pay-key')||''),String(key))){await fail(env,ip,'pay sms');throw new Err(403,'rejected')}
+ const t=String(b.text||b.message||b.body||'').slice(0,600);
+ const trx=String(b.trxid||(/(?:trx\s*id|txn\s*id|transaction\s*id)\s*[:\-]?\s*([A-Za-z0-9]{8,14})/i.exec(t)||[])[1]||'').toUpperCase(),
+  amt=+String(b.amount||(/(?:tk|bdt|৳)\.?\s*([\d,]+(?:\.\d{1,2})?)/i.exec(t)||[])[1]||'').replace(/,/g,''),
+  sender=bdp(b.sender||(/(?:from|sender)\s*(?:a\/c)?\s*[:\-]?\s*(\+?(?:88)?01\d{9})/i.exec(t)||[])[1]);
+ if(!/^[A-Z0-9]{8,14}$/.test(trx)||!(amt>0))throw new Err(400,'TrxID and amount not found');
+ const r=await sq(env,"SELECT id,txid,usd FROM payments WHERE txid LIKE ? AND status='pending' LIMIT 1",trx+'|%').first();
+ if(r){if(smsMatch({sender,amt},{sender:String(r.txid).split('|')[1],taka:Math.round(r.usd*bdtRate(env))})){await markPaid(C,r.id,'sms');return J({ok:true,matched:r.id})}
+  await tg(env,`⚠️ <b>Payment ${X(r.id)}</b>: SMS TrxID ${X(trx)} found but sender or amount differs (Tk ${amt}). Check it by hand.`);return J({ok:true,matched:false,reason:'mismatch'})}
+ try{await env.KV.put('paysms:'+trx,JSON.stringify({sender,amt}),{expirationTtl:172800})}catch{}
+ return J({ok:true,matched:false,stored:true})}
 async function markPaid(C,id,by){
  const env=C.env,r=await sq(env,'SELECT * FROM payments WHERE id=?',id).first();if(!r)return null;
+ if(r.status==='paid')return r;
  await sq(env,"UPDATE payments SET status='paid' WHERE id=?",id).run();
- if(r.sub&&/plan/i.test(r.item)){const plan={name:r.item,gateway:r.gateway,status:'paid',until:new Date(Date.now()+(/annual/i.test(r.item)?366:31)*864e5).toISOString()};try{await mutatePart(env,r.sub,'plan',()=>plan)}catch{}}
+ if(r.sub&&/plan/i.test(r.item)){const plan={name:r.item,gateway:r.gateway,status:'paid',ref:r.id,until:new Date(Date.now()+(/annual/i.test(r.item)?366:31)*864e5).toISOString()};try{await mutatePart(env,r.sub,'plan',()=>plan)}catch{}}
  await tg(env,`✅ <b>Payment ${X(id)} confirmed</b> by ${X(by)}\n${X(r.item)} · ${X(r.sub||'-')}`);return r}
 async function fPayment(C){
  const{b,env,ip}=C;if(!env.MASTER_KEY||!eq(b.key||'',env.MASTER_KEY)){await fail(env,ip,'founder payment');throw new Err(403,'rejected')}
@@ -734,29 +796,34 @@ async function gLogin(C){
  let d={};try{d=JSON.parse(s.d)}catch{}return J({token,who,d:proj(d,who)})}
 async function gData(C){
  const t=JSON.parse(await C.env.KV.get('gt:'+String(C.b.token||'').slice(0,60))||'null');if(!t)throw new Err(401,'expired');
- const[a,o,n]=await C.env.DB.batch([sq(C.env,'SELECT d FROM portal WHERE sub=? AND sid=?',t.sub,t.sid),
-  sq(C.env,"SELECT k,x,u,at FROM portal_out WHERE sub=? AND (sid=? OR sid='*') ORDER BY id DESC LIMIT 80",t.sub,t.sid),
-  sq(C.env,'SELECT title AS ev,body AS x,is_read AS u,created_at AS at FROM notifications WHERE workspace_sub=? AND recipient_id=? ORDER BY created_at DESC LIMIT 40',t.sub,t.sid)]);
+  let sig=await gSig(C.env,t.sub,t.sid);const wt=Math.min(20000,Math.max(0,+C.b.wait||0)),w0=Date.now(); /* long-poll: with wait+since the call returns the moment something changes */
+  if(wt&&typeof C.b.since==='string'){while(sig===C.b.since&&Date.now()-w0<wt){await sleep(1500);sig=await gSig(C.env,t.sub,t.sid)}if(sig===C.b.since)return J({same:true,sig,now:Date.now()})}
+  if(t.who==='guardian'&&!hitMem('gdv:'+t.sub+':'+t.sid,2,5000))bg(C,gSeenSt(C.env,t.sub,t.sid,'g','dv',Date.now()).run());
+  const[a,o,n,rxq,stq]=await C.env.DB.batch([sq(C.env,'SELECT d FROM portal WHERE sub=? AND sid=?',t.sub,t.sid),
+  sq(C.env,"SELECT k,x,u,at,meta FROM portal_out WHERE sub=? AND (sid=? OR sid='*') ORDER BY id DESC LIMIT 80",t.sub,t.sid),
+  sq(C.env,'SELECT title AS ev,body AS x,is_read AS u,created_at AS at FROM notifications WHERE workspace_sub=? AND recipient_id=? ORDER BY created_at DESC LIMIT 40',t.sub,t.sid),
+   sq(C.env,'SELECT k,at,who,e FROM portal_rx WHERE sub=? AND sid=? ORDER BY at DESC LIMIT 400',t.sub,t.sid),sq(C.env,"SELECT dv,seen,ty FROM portal_seen WHERE sub=? AND sid=? AND who='s'",t.sub,t.sid)]);
  const s=a.results&&a.results[0];if(!s)throw new Err(401,'expired');
  let d={};try{d=JSON.parse(s.d)}catch{}d=proj(d,t.who);
  if(t.who==='guardian'){ /* live layer: replies and notices written after the last publish are merged in, de-duplicated by time + text */
-  const rows=(o.results||[]).slice().reverse(),msgs=Array.isArray(d.msgs)?d.msgs:[],board=Array.isArray(d.board)?d.board:[];
+  const rows=(o.results||[]).slice().reverse().map(r=>{try{r.rq=r.meta?JSON.parse(r.meta).rq:undefined}catch{}return r}),msgs=Array.isArray(d.msgs)?d.msgs:[],board=Array.isArray(d.board)?d.board:[];
   for(const r of rows){
    if(r.k==='b'){if(!board.some(m=>m&&+m.at===+r.at&&m.t===r.x))board.push({t:r.x,u:!!r.u,at:+r.at})}
-   else if(!msgs.some(m=>m&&m.f==='s'&&+m.at===+r.at&&m.x===r.x))msgs.push({f:'s',x:r.x,at:+r.at})}
+   else if(r.k==='g'){const f=msgs.find(m=>m&&m.f==='g'&&+m.at===+r.at);if(f){if(r.rq&&!f.rq)f.rq=r.rq}else msgs.push({f:'g',x:r.x,at:+r.at,...(r.rq?{rq:r.rq}:{})})}
+   else{const f=msgs.find(m=>m&&m.f==='s'&&+m.at===+r.at&&m.x===r.x);if(f){if(r.rq&&!f.rq)f.rq=r.rq}else msgs.push({f:'s',x:r.x,at:+r.at,...(r.rq?{rq:r.rq}:{})})}}
   const nt=((n&&n.results)||[]).map(r=>({ev:r.ev,x:r.x,u:!!r.u,at:Date.parse(r.at)||0})); /* in-house alerts (attendance, reports, receipts) */
   d.notifs=nt;for(const r of nt){if(!board.some(m=>m&&+m.at===r.at&&m.t===r.x))board.push({t:r.x,u:false,at:r.at,ev:r.ev})}
-  d.msgs=msgs.sort((p,q)=>(+p.at||0)-(+q.at||0)).slice(-60);d.board=board.sort((p,q)=>(+q.at||0)-(+p.at||0)).slice(0,40)}
- return J({d,now:Date.now()})}
+  d.msgs=msgs.sort((p,q)=>(+p.at||0)-(+q.at||0)).slice(-60);d.board=board.sort((p,q)=>(+q.at||0)-(+p.at||0)).slice(0,40);gAttach(d,rxq.results||[],stq.results&&stq.results[0])}
+ return J({d,now:Date.now(),sig})}
 async function gReply(C){ /* institution/teacher → one guardian, delivered live through /api/g/data */
  const{b,env}=C,sub=wsn(b.sub),sid=str(b.sid,24).toUpperCase();if(!SUBRX.test(sub)||!/^[A-Z0-9-]{1,24}$/.test(sid))throw new Err(400,'invalid request');
  await tenantAuth(C,sub,['Admin','Teacher']);if(hitMem('grp:'+sub,600,3600000))throw new Err(429,'rate limited');
  const x=String(b.text||'').replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g,'').trim().slice(0,1000);if(!x)throw new Err(400,'empty');
  if(!(await sq(env,'SELECT 1 AS x FROM portal WHERE sub=? AND sid=?',sub,sid).first()))throw new Err(404,'student not published yet');
  const now=Date.now(),ca=+b.at,at=Number.isFinite(ca)&&Math.abs(ca-now)<6e5?Math.floor(ca):now; /* the sender's own timestamp is kept (±10 min) so the local copy and the live copy never show twice */
- const r=await sq(env,'INSERT INTO portal_out(sub,sid,k,x,u,at) VALUES(?,?,?,?,?,?)',sub,sid,'m',x,0,at).run();
+ const r=await sq(env,'INSERT INTO portal_out(sub,sid,k,x,u,at,meta) VALUES(?,?,?,?,?,?,?)',sub,sid,'m',x,0,at,gMeta(b)).run();
  if(Math.random()<.05)await sq(env,'DELETE FROM portal_out WHERE sub=?1 AND sid=?2 AND id<=(SELECT id FROM portal_out WHERE sub=?1 AND sid=?2 ORDER BY id DESC LIMIT 1 OFFSET 200)',sub,sid).run().catch(()=>{});
- return J({ok:true,id:r.meta&&r.meta.last_row_id,at})}
+ bg(C,pushTo(env,sub,'g',sid));return J({ok:true,id:r.meta&&r.meta.last_row_id,at})}
 async function gNotice(C){ /* notice / urgent broadcast to every guardian of the institution, one row for all */
  const{b,env}=C,sub=wsn(b.sub);if(!SUBRX.test(sub))throw new Err(400,'invalid request');
  await tenantAuth(C,sub,['Admin']);if(hitMem('gnt:'+sub,120,3600000))throw new Err(429,'rate limited');
@@ -765,16 +832,75 @@ async function gNotice(C){ /* notice / urgent broadcast to every guardian of the
  await sq(env,'INSERT INTO portal_out(sub,sid,k,x,u,at) VALUES(?,?,?,?,?,?)',sub,'*','b',x,b.urgent?1:0,at).run();
  if(Math.random()<.05)await sq(env,"DELETE FROM portal_out WHERE sub=?1 AND sid='*' AND id<=(SELECT id FROM portal_out WHERE sub=?1 AND sid='*' ORDER BY id DESC LIMIT 1 OFFSET 40)",sub).run().catch(()=>{});
  return J({ok:true,at})}
+ /* ───────────── chat extras: reply quotes, reactions, delivered/read ticks, typing, web push ───────────── */
+ const gMeta=b=>{const q=b&&b.rq;if(!isO(q))return null;const x=str(q.x,200);return x?JSON.stringify({rq:{x,n:str(q.n,60)}}):null};
+ const gSeenSt=(env,sub,sid,who,f,v)=>{if(!['dv','seen','ty'].includes(f))throw new Err(400,'invalid field');return sq(env,'INSERT INTO portal_seen(sub,sid,who,'+f+') VALUES(?1,?2,?3,?4) ON CONFLICT(sub,sid,who) DO UPDATE SET '+f+'=MAX('+f+',excluded.'+f+')',sub,sid,who,Math.floor(v))};
+ async function gSig(env,sub,sid){const r=await env.DB.batch([
+  sq(env,"SELECT COALESCE(MAX(id),0) a FROM portal_out WHERE sub=?1 AND (sid=?2 OR sid='*')",sub,sid),
+  sq(env,'SELECT COUNT(*) a,COALESCE(SUM(unicode(e)),0) b FROM portal_rx WHERE sub=?1 AND sid=?2',sub,sid),
+  sq(env,"SELECT COALESCE(MAX(ty),0) a,COALESCE(MAX(seen),0) b,COALESCE(MAX(dv),0) c FROM portal_seen WHERE sub=?1 AND sid=?2 AND who='s'",sub,sid),
+  sq(env,"SELECT COALESCE(MAX(updated),'') a FROM portal WHERE sub=?1 AND sid=?2",sub,sid),
+  sq(env,"SELECT COUNT(*) a,COALESCE(MAX(created_at),'') b FROM notifications WHERE workspace_sub=?1 AND recipient_id=?2",sub,sid)]);
+  return r.map(x=>{const o=(x.results||[])[0]||{};return Object.values(o).join(',')}).join('|')}
+ async function gStSig(env,sub){const[a,b]=await env.DB.batch([sq(env,"SELECT COALESCE(MAX(ty),0) a,COALESCE(MAX(dv),0) b,COALESCE(MAX(seen),0) c FROM portal_seen WHERE sub=? AND who='g'",sub),sq(env,'SELECT COUNT(*) a,COALESCE(SUM(unicode(e)),0) b FROM portal_rx WHERE sub=?',sub)]);
+  return[a,b].map(x=>Object.values((x.results||[])[0]||{}).join(',')).join('|')}
+ async function gStState(env,sub){const[a,b]=await env.DB.batch([sq(env,"SELECT sid,dv,seen,ty FROM portal_seen WHERE sub=? AND who='g' ORDER BY MAX(dv,seen,ty) DESC LIMIT 500",sub),sq(env,'SELECT sid,k,at,who,e FROM portal_rx WHERE sub=? ORDER BY at DESC LIMIT 800',sub)]);
+  return{seen:a.results||[],rx:b.results||[],now:Date.now()}}
+ function gAttach(d,rx,st){const mp=new Map();for(const r of rx){const key=r.k+':'+r.at;let o=mp.get(key);if(!o)mp.set(key,o={});(o[r.e]=o[r.e]||[]).push(r.who)}
+  for(const m of d.msgs){const o=mp.get((m.f==='g'?'g':'m')+':'+m.at);if(o)m.rx=o}
+  d.st={sdv:+(st&&st.dv)||0,sseen:+(st&&st.seen)||0,sty:+(st&&st.ty)||0}} /* sdv/sseen: when the institution fetched/read the guardian's messages; sty: when it last typed */
+ async function gWho(C){const b=C.b;
+  if(typeof b.token==='string'&&/^[0-9a-f]{48}$/.test(b.token)){const t=JSON.parse(await C.env.KV.get('gt:'+b.token)||'null');if(!t||t.who!=='guardian')throw new Err(401,'expired');return{sub:t.sub,sid:t.sid,who:'g'}}
+  const sub=wsn(b.sub),sid=str(b.sid,24).toUpperCase();if(!SUBRX.test(sub)||!/^[A-Z0-9-]{1,24}$/.test(sid))throw new Err(400,'invalid request');
+  await tenantAuth(C,sub,['Admin','Teacher']);return{sub,sid,who:'s'}}
+ async function gReact(C){ /* toggle one emoji on one message; one reaction per person per message */
+  const w=await gWho(C),b=C.b,e=String(b.e||''),k=b.k==='g'?'g':'m',at=Math.floor(+b.at);
+  if(hitMem('grx:'+w.sub+':'+w.sid+':'+w.who,200,3600000))throw new Err(429,'rate limited');
+  if(!RXE.test(e)||!Number.isFinite(at)||at<1e12||at>Date.now()+864e5)throw new Err(400,'invalid reaction');
+  const cur=await sq(C.env,'SELECT e FROM portal_rx WHERE sub=? AND sid=? AND k=? AND at=? AND who=?',w.sub,w.sid,k,at,w.who).first();
+  if(cur&&cur.e===e){await sq(C.env,'DELETE FROM portal_rx WHERE sub=? AND sid=? AND k=? AND at=? AND who=?',w.sub,w.sid,k,at,w.who).run();return J({ok:true,e:null})}
+  await sq(C.env,'INSERT INTO portal_rx(sub,sid,k,at,who,e) VALUES(?,?,?,?,?,?) ON CONFLICT(sub,sid,k,at,who) DO UPDATE SET e=excluded.e',w.sub,w.sid,k,at,w.who,e).run();
+  if(Math.random()<.05)await sq(C.env,'DELETE FROM portal_rx WHERE sub=?1 AND sid=?2 AND at<?3',w.sub,w.sid,Date.now()-90*864e5).run().catch(()=>{});
+  return J({ok:true,e})}
+ async function gSeen(C){ /* "I have read everything up to this message time" → blue ticks on the other side */
+  const w=await gWho(C),at=Math.min(Date.now()+6e4,Math.floor(+C.b.at||Date.now()));if(hitMem('gsn:'+w.sub+':'+w.sid+':'+w.who,600,3600000))throw new Err(429,'rate limited');
+  await C.env.DB.batch([gSeenSt(C.env,w.sub,w.sid,w.who,'seen',at),gSeenSt(C.env,w.sub,w.sid,w.who,'dv',at)]);return J({ok:true})}
+ async function gTyping(C){const w=await gWho(C);if(hitMem('gty:'+w.sub+':'+w.sid+':'+w.who,1500,3600000))return J({ok:true,skipped:true});
+  await gSeenSt(C.env,w.sub,w.sid,w.who,'ty',Date.now()).run();return J({ok:true})}
+ /* web push (no payload: the service worker shows a generic alert, the app fetches the real message). Needs VAPID_PUBLIC + VAPID_PRIVATE_JWK secrets; without them everything below is a quiet no-op. */
+ const PUSHHOST=/^https:\/\/([a-z0-9-]+\.)*(googleapis\.com|push\.services\.mozilla\.com|notify\.windows\.com|push\.apple\.com)\//i;
+ async function vapidJwt(env,aud){const key=await crypto.subtle.importKey('jwk',JSON.parse(env.VAPID_PRIVATE_JWK),{name:'ECDSA',namedCurve:'P-256'},false,['sign']);
+  const h=b64u(u8(JSON.stringify({typ:'JWT',alg:'ES256'}))),p=b64u(u8(JSON.stringify({aud,exp:nowS()+43200,sub:env.VAPID_SUBJECT||'mailto:admin@classphera.com'})));
+  return h+'.'+p+'.'+b64u(await crypto.subtle.sign({name:'ECDSA',hash:'SHA-256'},key,u8(h+'.'+p)))}
+ async function pushTo(env,sub,who,sid){try{if(!env.VAPID_PUBLIC||!env.VAPID_PRIVATE_JWK)return;if(hitMem('pu:'+sub+':'+who+':'+sid,40,60000))return;
+  const rows=(await sq(env,'SELECT id,ep FROM push_subs WHERE sub=?1 AND who=?2 AND (?3 IS NULL OR sid=?3) LIMIT 30',sub,who,sid==null?null:String(sid)).all()).results||[],jw={};
+  await Promise.all(rows.map(async r=>{if(!PUSHHOST.test(r.ep)){await sq(env,'DELETE FROM push_subs WHERE id=?',r.id).run();return}
+   const aud=new URL(r.ep).origin,jwt=jw[aud]||(jw[aud]=await vapidJwt(env,aud));
+   const res=await fetch(r.ep,{method:'POST',headers:{TTL:'86400',Urgency:'high',Authorization:'vapid t='+jwt+', k='+env.VAPID_PUBLIC}});
+   if(res.status===404||res.status===410)await sq(env,'DELETE FROM push_subs WHERE id=?',r.id).run()}))}catch{}}
+ async function pushKey(C){return J({key:C.env.VAPID_PUBLIC||'',on:!!(C.env.VAPID_PUBLIC&&C.env.VAPID_PRIVATE_JWK)})}
+ async function pushSub(C){const b=C.b,ep=String(b.endpoint||'').slice(0,700);if(!PUSHHOST.test(ep))throw new Err(400,'invalid endpoint');let sub,who,sid;
+  if(typeof b.token==='string'&&/^[0-9a-f]{48}$/.test(b.token)){const t=JSON.parse(await C.env.KV.get('gt:'+b.token)||'null');if(!t||t.who!=='guardian')throw new Err(401,'expired');sub=t.sub;who='g';sid=t.sid}
+  else{const s=await need(C);sub=s.sub;who='s';sid=String(s.ph||'')}
+  if(hitMem('psub:'+sub+':'+sid,30,3600000))throw new Err(429,'rate limited');const id=await sha(ep);
+  if(b.off){await sq(C.env,'DELETE FROM push_subs WHERE id=? AND sub=?',id,sub).run();return J({ok:true})}
+  await sq(C.env,'INSERT INTO push_subs(id,sub,who,sid,ep,created) VALUES(?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET sub=excluded.sub,who=excluded.who,sid=excluded.sid,ep=excluded.ep',id,sub,who,sid,ep,iso()).run();return J({ok:true})}
 async function gSend(C){
  const{b,env}=C,tk=String(b.token||'').slice(0,60),t=JSON.parse(await env.KV.get('gt:'+tk)||'null');if(!t||t.who!=='guardian')throw new Err(401,'expired');
  const x=String(b.text||'').replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g,'').trim().slice(0,1000);if(!x)throw new Err(400,'empty');
  if(await hit(env,'gsd:'+tk,30,3600))throw new Err(429,'rate limited');
  const n=await sq(env,'SELECT COUNT(*) AS n FROM portal_inbox WHERE sub=?',t.sub).first();if(n&&n.n>5000)throw new Err(429,'inbox full');
- const at=Date.now(),r=await sq(env,'INSERT INTO portal_inbox(sub,sid,x,at) VALUES(?,?,?,?)',t.sub,t.sid,x,at).run();return J({ok:true,id:r.meta&&r.meta.last_row_id,at})}
+ const at=Date.now(),mt=gMeta(b),r=(await env.DB.batch([sq(env,'INSERT INTO portal_inbox(sub,sid,x,at,meta) VALUES(?,?,?,?,?)',t.sub,t.sid,x,at,mt),sq(env,'INSERT INTO portal_out(sub,sid,k,x,u,at,meta) VALUES(?,?,?,?,?,?,?)',t.sub,t.sid,'g',x,0,at,mt)]))[0]; /* portal_out copy (k=g) is what /api/g/data returns to the guardian; the inbox row is deleted once the institution has read it */
+ if(Math.random()<.05)await sq(env,'DELETE FROM portal_out WHERE sub=?1 AND sid=?2 AND id<=(SELECT id FROM portal_out WHERE sub=?1 AND sid=?2 ORDER BY id DESC LIMIT 1 OFFSET 200)',t.sub,t.sid).run().catch(()=>{});
+ bg(C,pushTo(env,t.sub,'s',null));return J({ok:true,id:r&&r.meta&&r.meta.last_row_id,at})}
 async function gInbox(C){
- const sub=wsn(C.b.sub);if(!SUBRX.test(sub))throw new Err(401,'unauthorized');await tenantAuth(C,sub,['Admin']);
- const r=(await sq(C.env,'SELECT id,sid,x,at FROM portal_inbox WHERE sub=? ORDER BY id LIMIT 500',sub).all()).results||[];
- if(r.length)await sq(C.env,'DELETE FROM portal_inbox WHERE sub=? AND id<=?',sub,r[r.length-1].id).run();return J({msgs:r})}
+  const sub=wsn(C.b.sub);if(!SUBRX.test(sub))throw new Err(401,'unauthorized');await tenantAuth(C,sub,['Admin']);
+  const env=C.env,rd=async()=>(await sq(env,'SELECT id,sid,x,at,meta FROM portal_inbox WHERE sub=? ORDER BY id LIMIT 500',sub).all()).results||[];
+  let r=await rd(),sig=await gStSig(env,sub);const wt=Math.min(20000,Math.max(0,+C.b.wait||0)),w0=Date.now();
+  if(wt&&typeof C.b.since==='string')while(!r.length&&sig===C.b.since&&Date.now()-w0<wt){await sleep(1500);r=await rd();sig=await gStSig(env,sub)} /* long-poll */
+  if(r.length){await sq(env,'DELETE FROM portal_inbox WHERE sub=? AND id<=?',sub,r[r.length-1].id).run();const now=Date.now();await env.DB.batch([...new Set(r.map(m=>m.sid))].slice(0,100).map(s=>gSeenSt(env,sub,s,'s','dv',now))).catch(()=>{})}
+  const st=await gStState(env,sub);
+  return J({msgs:r.map(m=>{let q;try{q=m.meta?JSON.parse(m.meta).rq:undefined}catch{}return{id:m.id,sid:m.sid,x:m.x,at:m.at,...(q?{rq:q}:{})}}),st,sig})}
 async function gOtp(C){
  const{b,env,ip}=C,sub=wsn(b.sub),sid=str(b.sid,24).toUpperCase();if(!SUBRX.test(sub)||!sid)throw new Err(404,'not found');
  if(hitMem('go:'+ip,6,3600000)||await hit(env,'go:'+sub+':'+sid,3,3600))throw new Err(429,'rate limited');
@@ -926,8 +1052,8 @@ const R={
  '/api/passkey/challenge':pkChallenge,'/api/passkey/register':pkRegister,'/api/passkey/verify':pkVerify,'/api/mfa/totp/enable':totpEnable,'/api/mfa/totp/verify':totpVerify,
  '/api/preferences':prefs,'/api/schema/fields':schemaFields,'/api/audit':clientEvent,'/api/sync':clientEvent,
  '/api/notify':notifyLegacy,'/api/notify/sms':notifyCh,'/api/notify/whatsapp':notifyCh,'/api/notify/push':notifyCh,
- '/api/checkout':checkout,'/api/backup':backup,'/api/stripe/webhook':stripeHook,
- '/api/g/sync':gSync,'/api/g/login':gLogin,'/api/g/data':gData,'/api/g/send':gSend,'/api/g/reply':gReply,'/api/g/notice':gNotice,'/api/g/inbox':gInbox,'/api/g/otp':gOtp,'/api/g/quick':gQuick,
+ '/api/checkout':checkout,'/api/checkout/verify':checkoutVerify,'/api/pay/sms':paySms,'/api/backup':backup,'/api/stripe/webhook':stripeHook,
+ '/api/g/sync':gSync,'/api/g/login':gLogin,'/api/g/data':gData,'/api/g/send':gSend,'/api/g/reply':gReply,'/api/g/notice':gNotice,'/api/g/inbox':gInbox,'/api/g/otp':gOtp,'/api/g/quick':gQuick,'/api/g/react':gReact,'/api/g/seen':gSeen,'/api/g/typing':gTyping,'/api/push/key':pushKey,'/api/push/sub':pushSub,
  '/api/inst/search':instSearch,'/api/inst/publish':instPublish,'/api/admit/apply':admitApply,'/api/admit/inbox':admitInbox,
  '/api/ai':aiPaper,'/api/ai/report':aiReport,
  '/api/founder/system-alert':fAlert,'/api/founder/webhook':fAlert,'/api/founder/email-fallback':fMail,'/api/founder/health':fHealth,'/api/founder/payment':fPayment,'/api/founder/restore':fRestore};
@@ -1023,7 +1149,7 @@ const INITHASH=Object.fromEntries(PAGES.filter(p=>p.hash).map(p=>[p.path,p.hash]
 const DLPATHS={'/login':1,'/signup':1,'/guardian-signup':1,'/student-signup':1,'/download':1};
 const ALIAS={'/index.html':'/','/price':'/pricing','/sol':'/solutions','/os':'/connected-os','/fb':'/feedback','/product':'/products','/solution':'/solutions','/terms-of-use':'/terms','/privacy-policy':'/privacy','/help-center':'/help','/log-in':'/login','/sign-in':'/login','/register':'/signup','/sign-up':'/signup','/guardian':'/guardian-signup','/student':'/student-signup','/contact':'/connect','/connect-us':'/connect','/install':'/download','/app':'/download','/admit':'/admission','/enterprise-suite':'/enterprise'};
 const NAVP=['/','/login','/signup','/guardian-signup','/student-signup','/connect','/download','/admission','/enterprise','/products','/solutions','/pricing','/connected-os','/help','/feedback','/terms','/privacy'];
-const NAV=`<nav aria-label="ClasSphera pages" style="max-width:72rem;margin:0 auto;padding:1rem 1rem 2rem;display:flex;flex-wrap:wrap;gap:.5rem 1.25rem;justify-content:center;font-size:.8rem">${[...NAVP,...ENT.map(x=>'/enterprise/'+x[0])].map(p=>{const x=BYPATH[p];return`<a href="${p}" data-h="${E(x.hash||x.v)}" style="color:var(--mu)">${E(x.name)}</a>`}).join('')}</nav>`;
+const NAV=`<nav id="cs-nav" aria-label="ClasSphera pages" style="max-width:72rem;margin:0 auto;padding:1rem 1rem 2rem;display:flex;flex-wrap:wrap;gap:.5rem 1.25rem;justify-content:center;font-size:.8rem">${[...NAVP,...ENT.map(x=>'/enterprise/'+x[0])].map(p=>{const x=BYPATH[p];return`<a href="${p}" data-h="${E(x.hash||x.v)}" style="color:var(--mu)">${E(x.name)}</a>`}).join('')}</nav>`;
 const ROBOTS=lm=>`User-agent: *\nAllow: /\nDisallow: /api/\n\nSitemap: ${SITE}/sitemap.xml\n`;
 const SITEMAP=env=>{const lm=(env&&env.SITE_LASTMOD)||LASTMOD;return`<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${PAGES.map(p=>`<url><loc>${SITE}${p.path==='/'?'/':p.path}</loc><lastmod>${lm}</lastmod><changefreq>${p.cf}</changefreq><priority>${p.pr}</priority></url>`).join('\n')}\n</urlset>\n`};
 const MANIFEST=JSON.stringify({name:'ClasSphera',short_name:'ClasSphera',description:`${BRAND}. ${TAG}`,id:'/',start_url:'/',scope:'/',display:'standalone',background_color:'#070812',theme_color:'#070812',lang:'en',dir:'auto',categories:['education','productivity'],icons:[{src:'/icon-192.png',sizes:'192x192',type:'image/png',purpose:'any'},{src:'/icon-512.png',sizes:'512x512',type:'image/png',purpose:'any'},{src:'/favicon.svg',sizes:'any',type:'image/svg+xml',purpose:'any'}],shortcuts:[{name:'Login',url:'/login'},{name:'Guardian sign in',url:'/guardian-signup'},{name:'Student sign in',url:'/student-signup'},{name:'Global Online Admission',url:'/admission'}]});
@@ -1034,7 +1160,9 @@ self.addEventListener('install',e=>{e.waitUntil(caches.open(V).then(c=>c.add(new
 self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(k=>Promise.all(k.filter(x=>x.startsWith('cs-')&&x!==V).map(x=>caches.delete(x)))).then(()=>self.clients.claim()))});
 self.addEventListener('fetch',e=>{const r=e.request;if(r.method!=='GET')return;const u=new URL(r.url);if(u.origin!==location.origin||u.pathname.startsWith('/api/'))return;
  if(r.mode==='navigate'){e.respondWith(fetch(r).then(x=>{if(x.ok){const c=x.clone();caches.open(V).then(h=>h.put('/',c))}return x}).catch(()=>caches.match('/').then(x=>x||new Response('Offline',{status:503,headers:{'content-type':'text/plain'}}))));return}
- if(/\\.(png|svg|ico|webmanifest|woff2?|css|js)$/.test(u.pathname)&&u.pathname!=='/sw.js'){e.respondWith(caches.open(V).then(c=>c.match(r).then(h=>{const f=fetch(r).then(x=>{if(x.ok)c.put(r,x.clone());return x}).catch(()=>h);return h||f})))}});`;
+ if(/\\.(png|svg|ico|webmanifest|woff2?|css|js)$/.test(u.pathname)&&u.pathname!=='/sw.js'){e.respondWith(caches.open(V).then(c=>c.match(r).then(h=>{const f=fetch(r).then(x=>{if(x.ok)c.put(r,x.clone());return x}).catch(()=>h);return h||f})))}});
+self.addEventListener('push',e=>{e.waitUntil(self.registration.showNotification('ClasSphera',{body:'You have a new message',icon:'/icon-192.png',badge:'/icon-192.png',tag:'cs-msg',renotify:true}))});
+self.addEventListener('notificationclick',e=>{e.notification.close();e.waitUntil(self.clients.matchAll({type:'window',includeUncontrolled:true}).then(l=>{for(const c of l){if('focus' in c)return c.focus()}return self.clients.openWindow('/')}))});`;
 /* PNG icons rendered from the logo geometry (no external files needed) */
 const HEXV=[[50,5],[89,27.5],[89,72.5],[50,95],[11,72.5],[11,27.5]];
 const HEXE=HEXV.map((a,i)=>{const b=HEXV[(i+1)%6],dx=b[0]-a[0],dy=b[1]-a[1],l=Math.hypot(dx,dy),nx=dy/l,ny=-dx/l;return[nx,ny,nx*a[0]+ny*a[1]]});
@@ -1125,9 +1253,9 @@ async function page(req,env,ctx,u,main,p,o){
   .on('script[type="application/ld+json"]',{element(e){e.remove()}});
  const rw2=main?rw:rw.on('meta[name="robots"]',set('content','noindex,nofollow')),
  tenantJs=o.sub?`<script>try{history.replaceState(null,'',location.pathname+'?sub=${o.sub}'+location.hash)}catch(e){}</script>`:'';
- const out=rw2.on('head',{element(e){e.append('<link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="manifest" href="/manifest.webmanifest"><meta property="og:image" content="'+SITE+'/icon-512.png"><meta name="twitter:image" content="'+SITE+'/icon-512.png"><meta property="og:locale" content="en"><meta name="cs-app-version" content="'+APP_V+'">'+LD(o.sub?{...p,path:'/',title:T.title,desc:T.desc}:p)+BOOT()+tenantJs,{html:true})}})
+ const out=rw2.on('head',{element(e){e.append('<link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="manifest" href="/manifest.webmanifest"><meta property="og:image" content="'+SITE+'/icon-512.png"><meta name="twitter:image" content="'+SITE+'/icon-512.png"><meta property="og:locale" content="en"><meta name="cs-app-version" content="'+APP_V+'">'+LD(o.sub?{...p,path:'/',title:T.title,desc:T.desc}:p)+BOOT()+tenantJs+'<style>body:not([data-view="home"]) #cs-nav{display:none!important}</style>',{html:true})}})
   .on('main#app',{element(e){e.setInnerContent(p.body(),{html:true})}})
-  .on('footer#foot',{element(e){e.after(NAV,{html:true})}})
+  .on('footer#foot',{element(e){if(p.path==='/'&&!o.sub)e.after(NAV,{html:true})}})
   .on('body',{element(e){e.append(CLIENT_PATCH,{html:true})}}).transform(base);
  const buf=await out.arrayBuffer();
  if(cache&&ctx&&ctx.waitUntil)ctx.waitUntil(cache.put(ck,new Response(buf,{headers:{'content-type':'text/html; charset=utf-8','cache-control':'public, max-age=120'}})).catch(()=>{}));
