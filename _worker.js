@@ -22,7 +22,9 @@ const TAG='One platform. Complete control. Zero compromise.',BRAND='ClasSphera b
 const FOUNDER_MAIL='marufchowdhury579@gmail.com',FOUNDER_PHONE='+8801347272307',FOUNDER='M MARUF CHOWDHURY';
 const ROOTS=[APEX,'classphera.com','classsphera.com'];
 const AL='ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-const GATES=['bKash','Nagad','Rocket','SSLCommerz','Visa','Mastercard','Stripe','PayPal','Bitcoin','USDT Vault','Cash','Bank transfer'];
+const GATES=['bKash','Nagad','Rocket','Upay','SureCash','SSLCommerz','Visa','Mastercard','Stripe','PayPal','Bitcoin','USDT Vault','Cash','Bank transfer'];
+const GATE_KEY=new Map(GATES.map(g=>[g.toLowerCase().replace(/[^a-z]/g,''),g])); /* 'bkash', 'BKASH', 'Sure Cash', 'sure-cash' all resolve to the canonical name */
+const gateOf=v=>GATE_KEY.get(String(v==null?'':v).toLowerCase().replace(/[^a-z]/g,''))||null;
 const SUBRX=/^[a-z0-9](?:[a-z0-9-]{1,28}[a-z0-9])$/,MAILRX=/^[^@\s]+@[^@\s]+\.[A-Za-z]{2,}$/,PHONERX=/^\+?\d{7,15}$/,FPRX=/^[0-9a-f]{64}$/,KEYRX=/^[A-Za-z0-9_]{1,40}$/;
 const RESERVED=['www','app','api','admin','mail','ftp','root','support','status','cdn','static','login','signup','classphera','classsphera','qvmpxt'];
 const ROLES=['Admin','Teacher','Accountant','Guardian','Supervisor'];
@@ -129,7 +131,8 @@ const SCHEMA=[
  'CREATE INDEX IF NOT EXISTS idx_alerts_at ON alerts(at)',
  'CREATE INDEX IF NOT EXISTS idx_payments_status ON payments(status,at)']],
 ['2.3',['CREATE TABLE IF NOT EXISTS kvx(k TEXT PRIMARY KEY,v TEXT NOT NULL,exp INTEGER NOT NULL DEFAULT 0)']],
-['2.4',['DROP INDEX IF EXISTS idx_kvx_exp']] /* an index doubles the write cost of every put; the table is small and purged, so a scan is cheaper */
+['2.4',['DROP INDEX IF EXISTS idx_kvx_exp']], /* an index doubles the write cost of every put; the table is small and purged, so a scan is cheaper */
+['2.5',['CREATE TABLE IF NOT EXISTS portal_out(id INTEGER PRIMARY KEY AUTOINCREMENT,sub TEXT NOT NULL,sid TEXT NOT NULL,k TEXT NOT NULL DEFAULT \'m\',x TEXT NOT NULL,u INTEGER NOT NULL DEFAULT 0,at INTEGER NOT NULL)','CREATE INDEX IF NOT EXISTS idx_portal_out ON portal_out(sub,sid,id)']] /* teacher replies (k=m) and notices (k=b, sid=*) that guardians read live through /api/g/data */
 ];
 let MIGRATED=null;
 function migrate(env){
@@ -350,7 +353,26 @@ async function wsCreate(C){
   await env.DB.batch(idxStmts(env,sub,w.users));
   if(FPRX.test(fp))await trustDevice(env,sub,adm.email,fp,ip);
   await r2log(env,'WORKSPACE_CREATED',sub+' · '+str(w.inst.name,80),ip);
-  const t=await issue(C,{sub,ph:adm.email,role:'Admin'},fp);return sessResp(t,{revs:r.revs})
+  const t=await issue(C,{sub,ph:adm.email,role:'Admin'},fp);
+  /* founder alert: new institution registered. Runs only after the workspace is fully created, is never awaited, and any failure is swallowed, so it can never block or fail sign-up. Password and keys are never included. */
+  try{const a=w.inst.addr||{},v=(x,n)=>X(str(x,n)||'-'),ad=[a.b,a.s,a.a,a.c,a.k].map(x=>str(x,80)).filter(Boolean).join(', ')||'-',pn=isO(w.plan)&&w.plan.name?`
+💎 <b>Plan:</b> ${X(w.plan.name)}${w.plan.gateway?' ('+X(w.plan.gateway)+')':''}`:'';
+   bg(C,tg(env,`🚀 <b>New Institution Registered${b.migrate===true?' (migrated)':''}</b>
+✦━━━━━━━━━━━━━━━━✦
+🏛️ <b>Institution:</b> ${v(w.inst.name,120)}
+🎓 <b>Type:</b> ${v(w.inst.type,40)}
+🧑‍🤝‍🧑 <b>Students &amp; Staff:</b> ${v(w.inst.size,20)}
+🔗 <b>Subdomain:</b> ${X(sub)}.classphera.com
+🗺️ <b>Address:</b> ${X(ad)}
+🧭 <b>Country:</b> ${v(a.k,80)}
+✦━━━━━━━━━━━━━━━━✦
+🧑‍💼 <b>Admin Name:</b> ${v(adm.name,80)}
+📲 <b>Phone:</b> ${v(adm.email,30)}
+💌 <b>Email:</b> ${v(adm.mail,120)}${pn}
+✦━━━━━━━━━━━━━━━━✦
+🔑 <b>Workspace ID:</b> ${X(w.id)}
+⏱️ <b>Registered:</b> ${new Date().toISOString().slice(0,16).replace('T',' ')} UTC`))}catch{}
+  return sessResp(t,{revs:r.revs})
  }catch(e){await wsRollback(env,sub,made);throw e}}
 /* undo a half-created workspace so the person can simply try again (never leaves a 'taken' ghost) */
 async function wsRollback(env,sub,made){try{await env.DB.batch(['ws_chunks','ws_parts','ws_index','trusted','devices','ws_meta'].map(t=>sq(env,`DELETE FROM ${t} WHERE sub=?`,sub)).concat(made?[sq(env,'DELETE FROM institutions WHERE sub=?',sub)]:[]))}catch(e){console.error('[ClasSphera] rollback failed for '+sub+': '+(e&&e.message))}}
@@ -624,14 +646,16 @@ async function tenantAuth(C,sub,roles){
 
 /* ───────────── payments ───────────── */
 async function checkout(C){
- const{b,env,ip}=C,cur=/^[A-Z]{3}$/.test(String(b.cur||''))?b.cur:'USD',usd=Math.round(+b.usd*100)/100,item=(str(b.item,100)+(cur==='USD'?'':' ['+cur+']')).trim();
- if(!GATES.includes(b.gateway)||!(usd>0&&usd<=(cur==='USD'?5000:5e6))||!item)throw new Err(400,'invalid payment');
+ const{b,env,ip}=C,gw=gateOf(b.gateway),cur=/^[A-Z]{3}$/.test(String(b.cur||''))?b.cur:'USD',usd=Math.round(+b.usd*100)/100,item=(str(b.item,100)+(cur==='USD'?'':' ['+cur+']')).trim();
+ /* every check that can fail runs BEFORE anything is written, so a rejected payment costs no D1 write; the device keeps its own fallback record in localStorage */
+ if(!gw||!(usd>0&&usd<=(cur==='USD'?5000:5e6))||!item)throw new Err(400,'invalid payment');
  if(await hit(env,'pay:'+ip,20,3600))throw new Err(429,'rate limited');
  const id='PAY-'+rnd(5).toUpperCase(),s=await auth(C),sub=s?s.sub:(wsn(b.sub)||null),txid=str(b.txid,80);let url=null;
- await sq(env,'INSERT INTO payments(id,sub,gateway,item,usd,txid,status,at) VALUES(?,?,?,?,?,?,?,?)',id,sub,b.gateway,item,usd,txid,'pending',iso()).run();
- if(b.gateway==='Stripe'&&env.STRIPE_KEY){try{const r=await fetch('https://api.stripe.com/v1/checkout/sessions',{method:'POST',headers:{authorization:'Bearer '+env.STRIPE_KEY,'content-type':'application/x-www-form-urlencoded'},body:new URLSearchParams({mode:'payment','line_items[0][price_data][currency]':cur.toLowerCase(),'line_items[0][price_data][product_data][name]':item,'line_items[0][price_data][unit_amount]':String(Math.round(usd*100)),'line_items[0][quantity]':'1',success_url:C.u.origin+'/#dash',cancel_url:C.u.origin+'/#dash','metadata[payment_id]':id})});url=(await r.json()).url||null}catch{url=null}}
- await tg(env,`💳 <b>Payment ${id}</b>\n${X(item)} · ${cur==='USD'?'$':cur+' '}${usd}\n${X(b.gateway)} · TxID ${X(txid||'-')}\nWorkspace: ${X(sub||'visitor')}${b.institutionId?' · '+X(str(b.institutionId,40)):''}`);
- return J({status:'pending',url,message:url?'Redirecting to secure checkout':'Payment recorded. Access activates once the founder verifies it.'})}
+ try{await sq(env,'INSERT INTO payments(id,sub,gateway,item,usd,txid,status,at) VALUES(?,?,?,?,?,?,?,?)',id,sub,gw,item,usd,txid,'pending',iso()).run()}
+ catch(e){throw new Err(503,'The server could not record this payment right now. The details were kept on this device.',{fallback:'local'})}
+ if(gw==='Stripe'&&env.STRIPE_KEY){try{const r=await fetch('https://api.stripe.com/v1/checkout/sessions',{method:'POST',headers:{authorization:'Bearer '+env.STRIPE_KEY,'content-type':'application/x-www-form-urlencoded'},body:new URLSearchParams({mode:'payment','line_items[0][price_data][currency]':cur.toLowerCase(),'line_items[0][price_data][product_data][name]':item,'line_items[0][price_data][unit_amount]':String(Math.round(usd*100)),'line_items[0][quantity]':'1',success_url:C.u.origin+'/#dash',cancel_url:C.u.origin+'/#dash','metadata[payment_id]':id})});url=(await r.json()).url||null}catch{url=null}}
+ await tg(env,`💳 <b>Payment ${id}</b>\n${X(item)} · ${cur==='USD'?'$':cur+' '}${usd}\n${X(gw)} · TxID ${X(txid||'-')}\nWorkspace: ${X(sub||'visitor')}${b.institutionId?' · '+X(str(b.institutionId,40)):''}`);
+ return J({status:'pending',id,gateway:gw,url,message:url?'Redirecting to secure checkout':'Payment recorded. Access activates once the founder verifies it.'})}
 async function markPaid(C,id,by){
  const env=C.env,r=await sq(env,'SELECT * FROM payments WHERE id=?',id).first();if(!r)return null;
  await sq(env,"UPDATE payments SET status='paid' WHERE id=?",id).run();
@@ -662,10 +686,13 @@ async function backup(C){
  return J({ok:true,at:iso()})}
 
 /* ───────────── guardian / student portal (one D1 row per student) ───────────── */
+/* fees.items comes from the server snapshot: keep it a clean list of {n,a} so the fee page always renders */
+function normFees(f){f=isO(f)?f:{};const items=(Array.isArray(f.items)?f.items:[]).slice(0,40).map(i=>({n:str(i&&i.n,60),a:Math.round((+(i&&i.a)||0)*100)/100})).filter(i=>i.n&&i.a>0);
+ return{...f,items,cur:/^[A-Z]{3}$/.test(String(f.cur||''))?f.cur:'BDT'}}
 function proj(d,who){
  d=JSON.parse(JSON.stringify(d||{}));
  if(who==='student'){const r=d.rec||{},i=d.inst||{},s=d.stu||{};d={v:d.v,at:d.at,inst:{name:i.name,type:i.type,logo:i.logo,cctv:false},stu:{id:s.id,name:s.name,cls:s.cls,house:s.house,photo:s.photo},marks:d.marks||{},rec:{lesson:r.lesson||[],module:r.module||[],task:r.task||[]},quran:d.quran||''}}
- else if(!(d.inst&&d.inst.cctv))d.cam='';
+ else{if(!(d.inst&&d.inst.cctv))d.cam='';d.fees=normFees(d.fees)}
  return d}
 const hx=(v,n)=>typeof v==='string'&&new RegExp('^[0-9a-f]{'+n+'}$').test(v);
 async function gSync(C){
@@ -694,8 +721,34 @@ async function gLogin(C){
  let d={};try{d=JSON.parse(s.d)}catch{}return J({token,who,d:proj(d,who)})}
 async function gData(C){
  const t=JSON.parse(await C.env.KV.get('gt:'+String(C.b.token||'').slice(0,60))||'null');if(!t)throw new Err(401,'expired');
- const s=await sq(C.env,'SELECT d FROM portal WHERE sub=? AND sid=?',t.sub,t.sid).first();if(!s)throw new Err(401,'expired');
- let d={};try{d=JSON.parse(s.d)}catch{}return J({d:proj(d,t.who)})}
+ const[a,o]=await C.env.DB.batch([sq(C.env,'SELECT d FROM portal WHERE sub=? AND sid=?',t.sub,t.sid),
+  sq(C.env,"SELECT k,x,u,at FROM portal_out WHERE sub=? AND (sid=? OR sid='*') ORDER BY id DESC LIMIT 80",t.sub,t.sid)]);
+ const s=a.results&&a.results[0];if(!s)throw new Err(401,'expired');
+ let d={};try{d=JSON.parse(s.d)}catch{}d=proj(d,t.who);
+ if(t.who==='guardian'){ /* live layer: replies and notices written after the last publish are merged in, de-duplicated by time + text */
+  const rows=(o.results||[]).slice().reverse(),msgs=Array.isArray(d.msgs)?d.msgs:[],board=Array.isArray(d.board)?d.board:[];
+  for(const r of rows){
+   if(r.k==='b'){if(!board.some(m=>m&&+m.at===+r.at&&m.t===r.x))board.push({t:r.x,u:!!r.u,at:+r.at})}
+   else if(!msgs.some(m=>m&&m.f==='s'&&+m.at===+r.at&&m.x===r.x))msgs.push({f:'s',x:r.x,at:+r.at})}
+  d.msgs=msgs.sort((p,q)=>(+p.at||0)-(+q.at||0)).slice(-60);d.board=board.sort((p,q)=>(+q.at||0)-(+p.at||0)).slice(0,20)}
+ return J({d,now:Date.now()})}
+async function gReply(C){ /* institution/teacher → one guardian, delivered live through /api/g/data */
+ const{b,env}=C,sub=wsn(b.sub),sid=str(b.sid,24).toUpperCase();if(!SUBRX.test(sub)||!/^[A-Z0-9-]{1,24}$/.test(sid))throw new Err(400,'invalid request');
+ await tenantAuth(C,sub,['Admin','Teacher']);if(hitMem('grp:'+sub,600,3600000))throw new Err(429,'rate limited');
+ const x=String(b.text||'').replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g,'').trim().slice(0,1000);if(!x)throw new Err(400,'empty');
+ if(!(await sq(env,'SELECT 1 AS x FROM portal WHERE sub=? AND sid=?',sub,sid).first()))throw new Err(404,'student not published yet');
+ const now=Date.now(),ca=+b.at,at=Number.isFinite(ca)&&Math.abs(ca-now)<6e5?Math.floor(ca):now; /* the sender's own timestamp is kept (±10 min) so the local copy and the live copy never show twice */
+ const r=await sq(env,'INSERT INTO portal_out(sub,sid,k,x,u,at) VALUES(?,?,?,?,?,?)',sub,sid,'m',x,0,at).run();
+ if(Math.random()<.05)await sq(env,'DELETE FROM portal_out WHERE sub=?1 AND sid=?2 AND id<=(SELECT id FROM portal_out WHERE sub=?1 AND sid=?2 ORDER BY id DESC LIMIT 1 OFFSET 200)',sub,sid).run().catch(()=>{});
+ return J({ok:true,id:r.meta&&r.meta.last_row_id,at})}
+async function gNotice(C){ /* notice / urgent broadcast to every guardian of the institution, one row for all */
+ const{b,env}=C,sub=wsn(b.sub);if(!SUBRX.test(sub))throw new Err(400,'invalid request');
+ await tenantAuth(C,sub,['Admin']);if(hitMem('gnt:'+sub,120,3600000))throw new Err(429,'rate limited');
+ const x=String(b.text||'').replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g,'').trim().slice(0,300);if(!x)throw new Err(400,'empty');
+ const now=Date.now(),ca=+b.at,at=Number.isFinite(ca)&&Math.abs(ca-now)<6e5?Math.floor(ca):now;
+ await sq(env,'INSERT INTO portal_out(sub,sid,k,x,u,at) VALUES(?,?,?,?,?,?)',sub,'*','b',x,b.urgent?1:0,at).run();
+ if(Math.random()<.05)await sq(env,"DELETE FROM portal_out WHERE sub=?1 AND sid='*' AND id<=(SELECT id FROM portal_out WHERE sub=?1 AND sid='*' ORDER BY id DESC LIMIT 1 OFFSET 40)",sub).run().catch(()=>{});
+ return J({ok:true,at})}
 async function gSend(C){
  const{b,env}=C,tk=String(b.token||'').slice(0,60),t=JSON.parse(await env.KV.get('gt:'+tk)||'null');if(!t||t.who!=='guardian')throw new Err(401,'expired');
  const x=String(b.text||'').replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g,'').trim().slice(0,1000);if(!x)throw new Err(400,'empty');
@@ -862,7 +915,7 @@ const R={
  '/api/preferences':prefs,'/api/schema/fields':schemaFields,'/api/audit':clientEvent,'/api/sync':clientEvent,
  '/api/notify':notifyLegacy,'/api/notify/sms':notifyCh,'/api/notify/whatsapp':notifyCh,'/api/notify/push':notifyCh,
  '/api/checkout':checkout,'/api/backup':backup,'/api/stripe/webhook':stripeHook,
- '/api/g/sync':gSync,'/api/g/login':gLogin,'/api/g/data':gData,'/api/g/send':gSend,'/api/g/inbox':gInbox,'/api/g/otp':gOtp,'/api/g/quick':gQuick,
+ '/api/g/sync':gSync,'/api/g/login':gLogin,'/api/g/data':gData,'/api/g/send':gSend,'/api/g/reply':gReply,'/api/g/notice':gNotice,'/api/g/inbox':gInbox,'/api/g/otp':gOtp,'/api/g/quick':gQuick,
  '/api/inst/search':instSearch,'/api/inst/publish':instPublish,'/api/admit/apply':admitApply,'/api/admit/inbox':admitInbox,
  '/api/ai':aiPaper,'/api/ai/report':aiReport,
  '/api/founder/system-alert':fAlert,'/api/founder/webhook':fAlert,'/api/founder/email-fallback':fMail,'/api/founder/health':fHealth,'/api/founder/payment':fPayment,'/api/founder/restore':fRestore};
@@ -1098,7 +1151,7 @@ async function site(req,env,ctx,u,host,main,tenant){
 /* housekeeping: runs from a Cron trigger when this file is deployed as a standalone Worker */
 async function maintenance(env){
  await migrate(env);const d90=new Date(Date.now()-90*864e5).toISOString(),d180=new Date(Date.now()-180*864e5).toISOString();
- await env.DB.batch([sq(env,"DELETE FROM events WHERE at<? AND kind IN ('audit','sync')",d90),sq(env,'DELETE FROM alerts WHERE at<?',d90),sq(env,'DELETE FROM kvx WHERE exp>0 AND exp<?',Math.floor(Date.now()/1000)),sq(env,'DELETE FROM portal_inbox WHERE at<?',Date.now()-90*864e5),sq(env,'DELETE FROM trusted WHERE last_seen<?',d180),sq(env,'DELETE FROM audit WHERE at<?',new Date(Date.now()-365*864e5).toISOString())])}
+ await env.DB.batch([sq(env,"DELETE FROM events WHERE at<? AND kind IN ('audit','sync')",d90),sq(env,'DELETE FROM alerts WHERE at<?',d90),sq(env,'DELETE FROM kvx WHERE exp>0 AND exp<?',Math.floor(Date.now()/1000)),sq(env,'DELETE FROM portal_inbox WHERE at<?',Date.now()-90*864e5),sq(env,'DELETE FROM portal_out WHERE at<?',Date.now()-90*864e5),sq(env,'DELETE FROM trusted WHERE last_seen<?',d180),sq(env,'DELETE FROM audit WHERE at<?',new Date(Date.now()-365*864e5).toISOString())])}
 
 export default{
  async fetch(req,env,ctx){
