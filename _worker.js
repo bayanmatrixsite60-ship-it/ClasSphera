@@ -17,8 +17,8 @@
    ROUTES     see R{} below. Subdomains <name>.<root> serve the app shell and open that institution's secure login. */
 
 const SITE='https://classphera.pages.dev',APEX='classphera.pages.dev',LASTMOD='2026-11-12';
-const APP_V='2.8.1',API_SCHEMA='2.8.0',DATA_SCHEMA=3,MIN_CLIENT_MAJOR=2;
-const TAG='One platform. Complete control. Zero compromise.',BRAND='ClasSphera by QVMPXT';
+const APP_V='2.8.2',API_SCHEMA='2.8.0',DATA_SCHEMA=3,MIN_CLIENT_MAJOR=2;
+const TAG='One platform. Complete control. Zero compromise.',BRAND='ClasSphera by QVMPXT',BN_KW='স্কুল ম্যানেজমেন্ট সফটওয়্যার, কোচিং ম্যানেজম্যান্ট সফটওয়্যার, কলেজ ম্যানেজম্যান্ট সফটওয়্যার, নিরাপদ মাদ্রাসা ম্যানেজম্যান্ট সফটওয়্যার, মাদ্রাসা ফি ম্যানেজমেন্ট, অনলাইন স্কুল ম্যানেজমেন্ট সিস্টেম, মাদ্রাসার হিসাব রাখার সফটওয়্যার, স্কুলের বেতন ম্যানেজমেন্ট সিস্টেম, অনলাইন ফি কালেকশন সফটওয়্যার, ডিজিটাল ফি ও ডোনেশন রিকনসিলিয়েশন, মাদ্রাসা ম্যানেজম্যান্ট সফটওয়্যার, সুরক্ষিত স্কুল সফটওয়্যার, ক্লাউড স্কুল ম্যানেজমেন্ট বাংলাদেশ, মাদ্রাসা অটোমেশন সফটওয়্যার, নিরাপদ চ্যাট ও নোটিফিকেশন সিস্টেম',BN_DESC=' স্কুল, কলেজ, কোচিং ও মাদ্রাসার জন্য নিরাপদ ম্যানেজমেন্ট সফটওয়্যার: অনলাইন ফি কালেকশন, ডিজিটাল ফি ও ডোনেশন রিকনসিলিয়েশন, ক্লাউড স্কুল ম্যানেজমেন্ট বাংলাদেশ।';
 const FOUNDER_MAIL='marufchowdhury579@gmail.com',FOUNDER_PHONE='+8801347272307',FOUNDER='M MARUF CHOWDHURY';
 const ROOTS=[APEX,'classphera.com','classsphera.com'];
 const AL='ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -139,6 +139,10 @@ const SCHEMA=[
   'CREATE TABLE IF NOT EXISTS portal_seen(sub TEXT NOT NULL,sid TEXT NOT NULL,who TEXT NOT NULL,dv INTEGER NOT NULL DEFAULT 0,seen INTEGER NOT NULL DEFAULT 0,ty INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(sub,sid,who))',
   'CREATE TABLE IF NOT EXISTS push_subs(id TEXT PRIMARY KEY,sub TEXT NOT NULL,who TEXT NOT NULL,sid TEXT NOT NULL DEFAULT \'\',ep TEXT NOT NULL,created TEXT)',
   'CREATE INDEX IF NOT EXISTS idx_push_subs ON push_subs(sub,who,sid)']] /* chat extras: reply quotes (meta), reactions, delivered/read/typing state, web-push subscriptions */
+,['2.8',['ALTER TABLE push_subs ADD COLUMN p256dh TEXT','ALTER TABLE push_subs ADD COLUMN auth TEXT',
+  'CREATE TABLE IF NOT EXISTS push_q(id INTEGER PRIMARY KEY AUTOINCREMENT,sub TEXT NOT NULL,who TEXT NOT NULL,sid TEXT NOT NULL,pl TEXT NOT NULL,cur TEXT NOT NULL DEFAULT \'\',at INTEGER NOT NULL)']] /* readable push: subscription keys for encrypted payloads, plus a small queue for broadcasts that are larger than one request can send */
+,['2.9',['CREATE INDEX IF NOT EXISTS idx_portal_sid ON portal(sid)','CREATE INDEX IF NOT EXISTS idx_portal_ph ON portal(ph)']] /* guardian / student sign-in finds the row by mobile number or admission ID alone; the Secret PIN decides which institution it belongs to */
+,['3.0',['CREATE TABLE IF NOT EXISTS portal_pin(pk TEXT PRIMARY KEY,sub TEXT NOT NULL,sid TEXT NOT NULL)','CREATE INDEX IF NOT EXISTS idx_portal_pin_sub ON portal_pin(sub)','DROP INDEX IF EXISTS idx_portal_sid','DROP INDEX IF EXISTS idx_portal_ph']] /* one row per Secret PIN across ALL institutions: pk is a lookup hash of the PIN and is the PRIMARY KEY, so two students can never hold the same PIN */
 ];
 let MIGRATED=null;
 function migrate(env){
@@ -652,15 +656,16 @@ async function clientEvent(C){
  return J({ok:true})}
 /* in-house guardian alerts: no SMS / WhatsApp gateway. Each alert is written straight into the D1 notifications table
    and the guardian sees it live inside the website through /api/g/data. Recipient = sid, or the guardian phone matched to portal.ph. */
-async function inApp(env,sub,items){
+async function inApp(env,sub,items,C){
  const rows=items.map(a=>({sid:/^[A-Za-z0-9-]{1,24}$/.test(String(a.sid||''))?String(a.sid).toUpperCase():'',ph:String(a.to||'').replace(/\D/g,'').slice(-10),ev:str(a.ev,60),x:str(a.msg,200)})).filter(a=>a.x&&(a.sid||a.ph.length>=7));
  if(!rows.length)return{sent:0,failed:items.length};
  const phs=[...new Set(rows.filter(a=>!a.sid).map(a=>a.ph))],by=new Map();
  if(phs.length){const r=(await sq(env,'SELECT sid,ph FROM portal WHERE sub=?1 AND ph IN (SELECT value FROM json_each(?2))',sub,JSON.stringify(phs)).all()).results||[];for(const p of r){if(!by.has(p.ph))by.set(p.ph,[]);by.get(p.ph).push(p.sid)}}
- const at=Date.now(),st=[];let sent=0;
+ const at=Date.now(),st=[],tg=[];let sent=0;
  for(const a of rows){const sids=a.sid?[a.sid]:(by.get(a.ph)||[]);if(!sids.length)continue;sent++;
-  for(const sid of sids)st.push(sq(env,'INSERT INTO notifications(id,workspace_sub,recipient_id,title,body,type,is_read,created_at) SELECT ?1,?2,?3,?4,?5,?6,0,?7 WHERE NOT EXISTS(SELECT 1 FROM notifications WHERE workspace_sub=?2 AND recipient_id=?3 AND body=?5 AND created_at>?8)',rnd(8),sub,sid,a.ev||'Alert',a.x,'guardian_alert',new Date(at).toISOString(),new Date(at-216e5).toISOString()))} /* the same alert is not repeated within 6 hours */
- for(let i=0;i<st.length;i+=40)await env.DB.batch(st.slice(i,i+40));
+  for(const sid of sids){tg.push({sid,ev:a.ev,x:a.x});st.push(sq(env,'INSERT INTO notifications(id,workspace_sub,recipient_id,title,body,type,is_read,created_at) SELECT ?1,?2,?3,?4,?5,?6,0,?7 WHERE NOT EXISTS(SELECT 1 FROM notifications WHERE workspace_sub=?2 AND recipient_id=?3 AND body=?5 AND created_at>?8)',rnd(8),sub,sid,a.ev||'Alert',a.x,'guardian_alert',new Date(at).toISOString(),new Date(at-216e5).toISOString()))}} /* the same alert is not repeated within 6 hours */
+ const fresh=[];for(let i=0;i<st.length;i+=40){const res=await env.DB.batch(st.slice(i,i+40));res.forEach((r,k)=>{if(r&&r.meta&&r.meta.changes>0&&tg[i+k])fresh.push(tg[i+k])})}
+ if(fresh.length&&C)bg(C,pushAlerts(env,C.u.origin,sub,fresh)); /* every new alert (attendance, fee, result) is also pushed with its full text */
  if(st.length&&Math.random()<.05)await sq(env,'DELETE FROM notifications WHERE workspace_sub=?1 AND id IN (SELECT id FROM notifications WHERE workspace_sub=?1 ORDER BY created_at DESC LIMIT -1 OFFSET 5000)',sub).run().catch(()=>{});
  return{sent,failed:items.length-sent}}
 async function notifyCh(C){
@@ -673,7 +678,7 @@ async function notifyCh(C){
  if(ch==='sms'||ch==='whatsapp'||PHONERX.test(to)||hasSid){
   if(!hasSid&&!PHONERX.test(to))throw new Err(400,'invalid phone');
   if(hitMem('ntf:'+s.sub,2000,86400000))throw new Err(429,'daily limit');
-  const r=await inApp(env,s.sub,[{to,sid:hasSid?sid:'',ev,msg}]);status=r.sent?'in_app':'no_guardian_portal'}
+  const r=await inApp(env,s.sub,[{to,sid:hasSid?sid:'',ev,msg}],C);status=r.sent?'in_app':'no_guardian_portal'}
  await sq(env,'INSERT INTO events(sub,kind,data,at) VALUES(?,?,?,?)',s.sub,'out:'+ch,JSON.stringify({to,event:ev,msg,status}),iso()).run();
  return J({ok:true,status})}
 async function notifyLegacy(C){ /* {sub,id,key,messages:[{to,name,status,inst}]} → {sent,failed}; the server writes the alert text itself and saves it in-app */
@@ -684,7 +689,7 @@ async function notifyLegacy(C){ /* {sub,id,key,messages:[{to,name,status,inst}]}
  for(const a of(Array.isArray(b.messages)?b.messages:[]).slice(0,100)){const to=nph(a&&a.to),st=String(a&&a.status||'').toLowerCase(),name=nm(a&&a.name).slice(0,60),inst=nm(a&&a.inst).slice(0,80);
   if(PHONERX.test(to)&&(st==='present'||st==='absent'||st==='late')&&name&&inst)m.push({to,ev:'attendance',msg:`${name} was ${st} today at ${inst}.`})}
  if(!m.length)throw new Err(400,'no valid recipients');
- const r=await inApp(env,sub,m);
+ const r=await inApp(env,sub,m,C);
  return J({sent:r.sent,failed:r.failed},r.sent?200:502)}
 /* institution-level authority: a valid session of an allowed role, or the workspace key that the admin saved in the workspace itself */
 async function tenantAuth(C,sub,roles){
@@ -798,27 +803,35 @@ async function gSync(C){
  await tenantAuth(C,sub,['Admin']);if(hitMem('gsy:'+sub,60,3600000))throw new Err(429,'rate limited');
  const list=Array.isArray(b.students)?b.students:[],rows=[];
  for(const s of list.slice(0,20000)){const id=String(s&&s.id||'').toUpperCase();if(!/^[A-Z0-9-]{1,24}$/.test(id)||!isO(s.d))continue;if(JSON.stringify(s.d).length>60000)continue;
-  rows.push({id,ph:String(s.ph||'').replace(/\D/g,'').slice(-10),gh:hx(s.gh,64)?s.gh:'',gs:hx(s.gs,16)?s.gs:'',sh:hx(s.sh,64)?s.sh:'',ss:hx(s.ss,16)?s.ss:'',d:s.d})}
+  rows.push({id,ph:String(s.ph||'').replace(/\D/g,'').slice(-10),gh:hx(s.gh,64)?s.gh:'',gs:hx(s.gs,16)?s.gs:'',sh:hx(s.sh,64)?s.sh:'',ss:hx(s.ss,16)?s.ss:'',gk:hx(s.gk,64)?s.gk:'',sk:hx(s.sk,64)?s.sk:'',d:s.d})}
  if(list.length&&!rows.length)throw new Err(400,'no valid students');
+ const pins=new Map(),conf=[];let nopin=0; /* Secret PIN lookup keys: one PIN belongs to exactly one student, in this institution and in every other one */
+ for(const r of rows){const ks=[...new Set([r.gk,r.sk].filter(Boolean))];if(!ks.length){nopin++;continue}for(const k of ks){const o=pins.get(k);if(o&&o!==r.id){conf.push(r.id);continue}pins.set(k,r.id)}}
  const gen=Date.now(),at=iso(),st=[];let cur=[],sz=0;
  const flush=()=>{if(cur.length)st.push(sq(env,"INSERT INTO portal(sub,sid,ph,gh,gs,sh,ss,d,gen,updated) SELECT ?1,json_extract(value,'$.id'),json_extract(value,'$.ph'),json_extract(value,'$.gh'),json_extract(value,'$.gs'),json_extract(value,'$.sh'),json_extract(value,'$.ss'),json_extract(value,'$.d'),?3,?4 FROM json_each(?2) WHERE 1 ON CONFLICT(sub,sid) DO UPDATE SET ph=excluded.ph,gh=excluded.gh,gs=excluded.gs,sh=excluded.sh,ss=excluded.ss,d=excluded.d,gen=excluded.gen,updated=excluded.updated",sub,JSON.stringify(cur),gen,at));cur=[];sz=0};
  for(const r of rows){const t=JSON.stringify(r).length;if(sz+t>500000)flush();cur.push(r);sz+=t}flush();
+ st.push(sq(env,'DELETE FROM portal_pin WHERE sub=?1',sub));
+ {const pl=[...pins].map(([k,id])=>({k,id}));for(let i=0;i<pl.length;i+=1500)st.push(sq(env,"INSERT INTO portal_pin(pk,sub,sid) SELECT json_extract(value,'$.k'),?1,json_extract(value,'$.id') FROM json_each(?2) WHERE 1 ON CONFLICT(pk) DO NOTHING",sub,JSON.stringify(pl.slice(i,i+1500))))} /* a PIN already held by another student is left alone, never overwritten */
  st.push(sq(env,'DELETE FROM portal WHERE sub=?1 AND gen<>?2',sub,gen));
  for(let i=0;i<st.length;i+=40)await env.DB.batch(st.slice(i,i+40));
- return J({ok:true,count:rows.length})}
-async function gLogin(C){
- const{b,env,ip}=C,sub=wsn(String(b.sub||'').toLowerCase().replace(/^https?:\/\//,'').replace(/\/.*$/,'').replace(/\.classs?phera\.[a-z.]+$/,'')),sid=str(b.sid,24).toUpperCase(),who=b.who==='student'?'student':'guardian',pin=String(b.pin||'').slice(0,40);
+ const own=new Map(((await sq(env,'SELECT pk,sid FROM portal_pin WHERE sub=?',sub).all()).results||[]).map(r=>[r.pk,r.sid]));
+ for(const[k,id]of pins)if(own.get(k)!==id)conf.push(id); /* the PIN is held by someone else: the admin app makes this student a new one */
+ return J({ok:true,count:rows.length,nopin,conflicts:[...new Set(conf)].slice(0,200)})}
+async function gLogin(C){ /* the Secret PIN is unique to one student across every institution and finds that student on its own; the guardian's registered mobile number (or the student's admission ID) must belong to that same student, otherwise the PIN does nothing. There is no per-ID lockout, so one person can never lock another institution's users out; the PIN is 100 bits, so guessing is not possible, and attempts are still limited per IP. */
+ const{b,env,ip}=C,who=b.who==='student'?'student':'guardian',raw=String(b.pin||'').slice(0,40);
+ const cn=raw.toUpperCase().replace(/[\s-]/g,'').replace(/O/g,'0').replace(/[IL]/g,'1'),pin=cn.length===20?cn.match(/.{4}/g).join('-'):raw;
+ const sid=str(b.sid,24).toUpperCase(),ph=String(b.phone||'').replace(/\D/g,'').slice(-10);
  if(hitMem('gl:'+ip,30,3600000)||await hit(env,'gl:'+ip,20,3600))throw new Err(429,'Too many attempts. Try again later.');
- const fk='gf:'+sub+':'+sid+':'+who,fails=+(await env.KV.get(fk))||0;
- if(fails>=5)throw new Err(429,'Too many wrong attempts. Wait 15 minutes or ask the institution to reset access.');
- const s=SUBRX.test(sub)&&sid?await sq(env,'SELECT * FROM portal WHERE sub=? AND sid=?',sub,sid).first():null;
+ const pr=/^[0-9A-Z]{20}$/.test(cn)?await sq(env,'SELECT sub,sid FROM portal_pin WHERE pk=?',await sha('pk:'+cn)).first():null;
+ const s=pr?await sq(env,'SELECT * FROM portal WHERE sub=? AND sid=?',pr.sub,pr.sid).first():null;
  const salt=s?(who==='student'?s.ss:s.gs):'0'.repeat(16),want=s?(who==='student'?s.sh:s.gh):'0'.repeat(64);
- const okPin=!!s&&FPRX.test(want)&&eq(await sha(pin+':'+salt),want),okPh=who==='student'||(!!s&&s.ph.length>=7&&String(b.phone||'').replace(/\D/g,'').slice(-10)===s.ph);
- if(!(okPin&&okPh)){await env.KV.put(fk,String(fails+1),{expirationTtl:900});await fail(env,ip,'guardian login '+sub);throw new Err(401,'Details did not match. Check the ID, mobile number and PIN.')}
- await env.KV.delete(fk);const token=rnd(24);await env.KV.put('gt:'+token,JSON.stringify({sub,sid,who}),{expirationTtl:43200});
- let d={};try{d=JSON.parse(s.d)}catch{}return J({token,who,d:proj(d,who)})}
+ const okPin=!!s&&FPRX.test(want)&&eq(await sha(pin+':'+salt),want),okWho=!!s&&(who==='student'?s.sid===sid:(s.ph.length>=7&&s.ph===ph));
+ if(!(okPin&&okWho)){await fail(env,ip,'portal login '+who);throw new Err(401,who==='student'?'Details did not match. Check the admission ID and Secret PIN.':'Details did not match. Check the registered mobile number and Secret PIN.')}
+ const token=rnd(24);await env.KV.put('gt:'+token,JSON.stringify({sub:s.sub,sid:s.sid,who}),{expirationTtl:43200});
+ let d={};try{d=JSON.parse(s.d)}catch{}return J({token,who,sub:s.sub,d:proj(d,who)})}
 async function gData(C){
  const t=JSON.parse(await C.env.KV.get('gt:'+String(C.b.token||'').slice(0,60))||'null');if(!t)throw new Err(401,'expired');
+  bg(C,pushDrain(C.env));
   let sig=await gSig(C.env,t.sub,t.sid);const wt=Math.min(20000,Math.max(0,+C.b.wait||0)),w0=Date.now(); /* long-poll: with wait+since the call returns the moment something changes */
   if(wt&&typeof C.b.since==='string'){while(sig===C.b.since&&Date.now()-w0<wt){await sleep(1500);sig=await gSig(C.env,t.sub,t.sid)}if(sig===C.b.since)return J({same:true,sig,now:Date.now()})}
   if(t.who==='guardian'&&!hitMem('gdv:'+t.sub+':'+t.sid,2,5000))bg(C,gSeenSt(C.env,t.sub,t.sid,'g','dv',Date.now()).run());
@@ -831,7 +844,7 @@ async function gData(C){
  if(t.who==='guardian'){ /* live layer: replies and notices written after the last publish are merged in, de-duplicated by time + text */
   const rows=(o.results||[]).slice().reverse().map(r=>{try{r.rq=r.meta?JSON.parse(r.meta).rq:undefined}catch{}return r}),msgs=Array.isArray(d.msgs)?d.msgs:[],board=Array.isArray(d.board)?d.board:[];
   for(const r of rows){
-   if(r.k==='b'){if(!board.some(m=>m&&+m.at===+r.at&&m.t===r.x))board.push({t:r.x,u:!!r.u,at:+r.at})}
+   if(r.k==='b'){if(!board.some(m=>m&&+m.at===+r.at&&m.t===r.x))board.push({t:r.x,u:!!r.u,at:+r.at});if(!msgs.some(m=>m&&m.nt&&+m.at===+r.at&&m.x===r.x))msgs.push({f:'s',x:r.x,at:+r.at,nt:r.u?2:1})} /* a notice also lands in the chat, flagged nt:1 (notice) or nt:2 (urgent) so the app can label it "নোটিস" */
    else if(r.k==='g'){const f=msgs.find(m=>m&&m.f==='g'&&+m.at===+r.at);if(f){if(r.rq&&!f.rq)f.rq=r.rq}else msgs.push({f:'g',x:r.x,at:+r.at,...(r.rq?{rq:r.rq}:{})})}
    else{const f=msgs.find(m=>m&&m.f==='s'&&+m.at===+r.at&&m.x===r.x);if(f){if(r.rq&&!f.rq)f.rq=r.rq}else msgs.push({f:'s',x:r.x,at:+r.at,...(r.rq?{rq:r.rq}:{})})}}
   const nt=((n&&n.results)||[]).map(r=>({ev:r.ev,x:r.x,u:!!r.u,at:Date.parse(r.at)||0})); /* in-house alerts (attendance, reports, receipts) */
@@ -846,15 +859,23 @@ async function gReply(C){ /* institution/teacher → one guardian, delivered liv
  const now=Date.now(),ca=+b.at,at=Number.isFinite(ca)&&Math.abs(ca-now)<6e5?Math.floor(ca):now; /* the sender's own timestamp is kept (±10 min) so the local copy and the live copy never show twice */
  const r=await sq(env,'INSERT INTO portal_out(sub,sid,k,x,u,at,meta) VALUES(?,?,?,?,?,?,?)',sub,sid,'m',x,0,at,gMeta(b)).run();
  if(Math.random()<.05)await sq(env,'DELETE FROM portal_out WHERE sub=?1 AND sid=?2 AND id<=(SELECT id FROM portal_out WHERE sub=?1 AND sid=?2 ORDER BY id DESC LIMIT 1 OFFSET 200)',sub,sid).run().catch(()=>{});
- bg(C,pushTo(env,sub,'g',sid));return J({ok:true,id:r.meta&&r.meta.last_row_id,at})}
-async function gNotice(C){ /* notice / urgent broadcast to every guardian of the institution, one row for all */
+ bg(C,(async()=>pushTo(env,sub,'g',sid,await mkPl(env,C.u.origin,sub,{k:'msg',x,at,sid})))());return J({ok:true,id:r.meta&&r.meta.last_row_id,at})}
+async function gNotice(C){ /* notice / urgent broadcast to every guardian: one row for all (shows on the notice board AND in each guardian's chat), pushed with the full text */
  const{b,env}=C,sub=wsn(b.sub);if(!SUBRX.test(sub))throw new Err(400,'invalid request');
  await tenantAuth(C,sub,['Admin']);if(hitMem('gnt:'+sub,120,3600000))throw new Err(429,'rate limited');
- const x=String(b.text||'').replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g,'').trim().slice(0,300);if(!x)throw new Err(400,'empty');
+ const x=String(b.text||b.t||'').replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g,'').trim().slice(0,300);if(!x)throw new Err(400,'empty');
  const now=Date.now(),ca=+b.at,at=Number.isFinite(ca)&&Math.abs(ca-now)<6e5?Math.floor(ca):now;
- await sq(env,'INSERT INTO portal_out(sub,sid,k,x,u,at) VALUES(?,?,?,?,?,?)',sub,'*','b',x,b.urgent?1:0,at).run();
+ await sq(env,'INSERT INTO portal_out(sub,sid,k,x,u,at) VALUES(?,?,?,?,?,?)',sub,'*','b',x,(b.urgent||b.u)?1:0,at).run();
  if(Math.random()<.05)await sq(env,"DELETE FROM portal_out WHERE sub=?1 AND sid='*' AND id<=(SELECT id FROM portal_out WHERE sub=?1 AND sid='*' ORDER BY id DESC LIMIT 1 OFFSET 40)",sub).run().catch(()=>{});
- return J({ok:true,at})}
+ let pushed=0,devices=0,more=false;
+ if(pushOn(env)){try{
+  const cap=pcap(env),pl=await mkPl(env,C.u.origin,sub,{k:(b.urgent||b.u)?'urgent':'notice',x,at,sid:'*'}),rows=await pushRows(env,sub,'g',null,'',cap);
+  devices=rows.length;pushed=await pushSend(env,rows,pl);
+  if(rows.length>=cap){more=true;await sq(env,'INSERT INTO push_q(sub,who,sid,pl,cur,at) VALUES(?,?,?,?,?,?)',sub,'g','*',JSON.stringify(pl),rows[rows.length-1].id,Date.now()).run()} /* the rest of the guardians are pushed in the background, one batch per request */
+ }catch(e){console.error('notice push failed:',e&&e.message)}}
+ /* guardians with no working push device: the admin can share the notice with them by WhatsApp or SMS from their own phone (no gateway involved) */
+ const np=((await sq(env,"SELECT sid,ph FROM portal WHERE sub=?1 AND ph<>'' AND sid NOT IN (SELECT sid FROM push_subs WHERE sub=?1 AND who='g') LIMIT 300",sub).all().catch(()=>null))||{}).results||[];
+ return J({ok:true,at,pushed,devices,more,noPush:np.map(r=>({sid:r.sid,ph:r.ph}))})}
  /* ───────────── chat extras: reply quotes, reactions, delivered/read ticks, typing, web push ───────────── */
  const gMeta=b=>{const q=b&&b.rq;if(!isO(q))return null;const x=str(q.x,200);return x?JSON.stringify({rq:{x,n:str(q.n,60)}}):null};
  const gSeenSt=(env,sub,sid,who,f,v)=>{if(!['dv','seen','ty'].includes(f))throw new Err(400,'invalid field');return sq(env,'INSERT INTO portal_seen(sub,sid,who,'+f+') VALUES(?1,?2,?3,?4) ON CONFLICT(sub,sid,who) DO UPDATE SET '+f+'=MAX('+f+',excluded.'+f+')',sub,sid,who,Math.floor(v))};
@@ -890,7 +911,7 @@ async function gNotice(C){ /* notice / urgent broadcast to every guardian of the
   await C.env.DB.batch([gSeenSt(C.env,w.sub,w.sid,w.who,'seen',at),gSeenSt(C.env,w.sub,w.sid,w.who,'dv',at)]);return J({ok:true})}
  async function gTyping(C){const w=await gWho(C);if(hitMem('gty:'+w.sub+':'+w.sid+':'+w.who,1500,3600000))return J({ok:true,skipped:true});
   await gSeenSt(C.env,w.sub,w.sid,w.who,'ty',Date.now()).run();return J({ok:true})}
- /* web push (no payload: the service worker shows a generic alert, the app fetches the real message). Needs VAPID_PUBLIC + VAPID_PRIVATE_JWK (or VAPID_PRIVATE) secrets; without them everything below is a quiet no-op.
+ /* web push with the real message: the text, institution name and logo travel inside an encrypted payload (RFC 8291). Subscriptions saved before the keys were stored fall back to a short lookup (/api/push/peek). Needs VAPID_PUBLIC + VAPID_PRIVATE_JWK (or VAPID_PRIVATE) secrets; without them everything below is a quiet no-op.
     VAPID_PRIVATE_JWK may hold a full JWK (JSON) or just the raw private key string from vapidkeys.com (43 characters); the JWK is then built from it and VAPID_PUBLIC. */
  const PUSHHOST=/^https:\/\/([a-z0-9-]+\.)*(googleapis\.com|push\.services\.mozilla\.com|notify\.windows\.com|push\.apple\.com)\//i;
  const vapidPriv=env=>String(env.VAPID_PRIVATE_JWK||env.VAPID_PRIVATE||'').trim(),vapidPub=env=>String(env.VAPID_PUBLIC||'').replace(/\s+/g,'').replace(/^"|"$/g,'');
@@ -903,19 +924,73 @@ async function gNotice(C){ /* notice / urgent broadcast to every guardian of the
  async function vapidJwt(env,aud){const key=await vapidKey(env);
   const h=b64u(u8(JSON.stringify({typ:'JWT',alg:'ES256'}))),p=b64u(u8(JSON.stringify({aud,exp:nowS()+43200,sub:env.VAPID_SUBJECT||'mailto:admin@classphera.com'})));
   return h+'.'+p+'.'+b64u(await crypto.subtle.sign({name:'ECDSA',hash:'SHA-256'},key,u8(h+'.'+p)))}
- async function pushTo(env,sub,who,sid){try{if(!vapidPub(env)||!vapidPriv(env))return;if(hitMem('pu:'+sub+':'+who+':'+sid,40,60000))return;
-  const rows=(await sq(env,'SELECT id,ep FROM push_subs WHERE sub=?1 AND who=?2 AND (?3 IS NULL OR sid=?3) LIMIT 30',sub,who,sid==null?null:String(sid)).all()).results||[],jw={};
-  await Promise.all(rows.map(async r=>{if(!PUSHHOST.test(r.ep)){await sq(env,'DELETE FROM push_subs WHERE id=?',r.id).run();return}
-   const aud=new URL(r.ep).origin,jwt=jw[aud]||(jw[aud]=await vapidJwt(env,aud));
-   const res=await fetch(r.ep,{method:'POST',headers:{TTL:'86400',Urgency:'high',Authorization:'vapid t='+jwt+', k='+vapidPub(env)}});
-   if(res.status===404||res.status===410)await sq(env,'DELETE FROM push_subs WHERE id=?',r.id).run()}))}catch(e){console.error('web push failed:',e&&e.message)}}
+ const pushOn=env=>!!(vapidPub(env)&&vapidPriv(env)),pcap=env=>Math.max(5,Math.min(+env.PUSH_BATCH||30,900)); /* devices pushed per request (the free plan allows ~50 outgoing calls; raise PUSH_BATCH on a paid plan) */
+ const cutB=(t,n)=>{t=String(t==null?'':t);if(u8(t).length<=n)return t;let a=0,z=t.length;while(a<z){const m=(a+z+1)>>1;if(u8(t.slice(0,m)).length<=n-3)a=m;else z=m-1}return t.slice(0,a)+'…'};
+ const evKind=e=>{e=String(e||'').toLowerCase();return/attend|present|absent|late/.test(e)?'attendance':/receipt|fee|pay|due|bill/.test(e)?'fee':/report|result|mark|exam|merit/.test(e)?'result':'alert'};
+ /* institution name + logo as saved in the institution profile (published with each student row) */
+ const instInfo=(env,sub)=>memo('im:'+sub,300000,async()=>{const r=await sq(env,"SELECT json_extract(d,'$.inst.name') n,length(json_extract(d,'$.inst.logo')) l FROM portal WHERE sub=? LIMIT 1",sub).first().catch(()=>null);let n=str(r&&r.n,80);if(!n){const i=await dbInst(env,sub).catch(()=>null);n=str(i&&i.name,80)}return{n:n||'ClasSphera',l:+(r&&r.l)||0}});
+ async function mkPl(env,origin,sub,o){const im=await instInfo(env,sub),at=o.at||Date.now();return{t:im.n,b:cutB(o.x,2200),i:origin+'/api/inst/logo?s='+sub+(im.l?'&v='+im.l:''),k:o.k||'msg',at,s:sub,sid:o.sid||'',g:(o.k||'msg')+':'+at}}
+ /* RFC 8291 (aes128gcm) payload encryption with WebCrypto */
+ async function pushBody(p256dh,auth,text){const ua=unb64u(p256dh),au=unb64u(auth);if(ua.length!==65||ua[0]!==4||au.length<16)return null;
+  const cat=(...a)=>{const o=new Uint8Array(a.reduce((n,x)=>n+x.length,0));let k=0;for(const x of a){o.set(x,k);k+=x.length}return o};
+  const kp=await crypto.subtle.generateKey({name:'ECDH',namedCurve:'P-256'},true,['deriveBits']),asPub=new Uint8Array(await crypto.subtle.exportKey('raw',kp.publicKey));
+  const uaKey=await crypto.subtle.importKey('raw',ua,{name:'ECDH',namedCurve:'P-256'},false,[]),secret=await crypto.subtle.deriveBits({name:'ECDH',public:uaKey},kp.privateKey,256);
+  const hk=async(ikm,salt,info,bits)=>crypto.subtle.deriveBits({name:'HKDF',hash:'SHA-256',salt,info},await crypto.subtle.importKey('raw',ikm,'HKDF',false,['deriveBits']),bits);
+  const ikm=await hk(secret,au,cat(u8('WebPush: info\0'),ua,asPub),256),salt=crypto.getRandomValues(new Uint8Array(16));
+  const cek=await hk(ikm,salt,u8('Content-Encoding: aes128gcm\0'),128),nonce=await hk(ikm,salt,u8('Content-Encoding: nonce\0'),96);
+  const key=await crypto.subtle.importKey('raw',cek,'AES-GCM',false,['encrypt']),ct=new Uint8Array(await crypto.subtle.encrypt({name:'AES-GCM',iv:new Uint8Array(nonce)},key,cat(u8(text),new Uint8Array([2]))));
+  return cat(salt,new Uint8Array([0,0,16,0,65]),asPub,ct)}
+ async function pushOne(env,r,pl,jw){
+  if(!PUSHHOST.test(r.ep)){await sq(env,'DELETE FROM push_subs WHERE id=?',r.id).run();return 0}
+  const aud=new URL(r.ep).origin,jwt=await(jw[aud]||(jw[aud]=vapidJwt(env,aud))),h={TTL:'86400',Urgency:'high',Authorization:'vapid t='+jwt+', k='+vapidPub(env)};let body=null;
+  if(pl&&r.p256dh&&r.auth){try{body=await pushBody(r.p256dh,r.auth,JSON.stringify(pl))}catch{body=null}}
+  if(body){h['Content-Encoding']='aes128gcm';h['Content-Type']='application/octet-stream'}
+  const res=await fetch(r.ep,{method:'POST',headers:h,body:body||undefined});
+  if(res.status===404||res.status===410){await sq(env,'DELETE FROM push_subs WHERE id=?',r.id).run();return 0}
+  return res.ok?1:0}
+ async function pushSend(env,rows,pl){const jw={};const r=await Promise.all(rows.map(x=>pushOne(env,x,pl,jw).catch(e=>{console.error('web push failed:',e&&e.message);return 0})));return r.reduce((a,b)=>a+b,0)}
+ const pushRows=async(env,sub,who,sid,cur,n)=>(await sq(env,'SELECT id,sid,ep,p256dh,auth FROM push_subs WHERE sub=?1 AND who=?2 AND (?3 IS NULL OR sid=?3) AND id>?4 ORDER BY id LIMIT ?5',sub,who,sid==null||sid==='*'?null:String(sid),cur||'',n).all()).results||[];
+ async function pushTo(env,sub,who,sid,pl){try{if(!pushOn(env))return 0;if(hitMem('pu:'+sub+':'+who+':'+sid,40,60000))return 0;
+  const cap=pcap(env),rows=await pushRows(env,sub,who,sid,'',cap),n=await pushSend(env,rows,pl);
+  if(rows.length>=cap)await sq(env,'INSERT INTO push_q(sub,who,sid,pl,cur,at) VALUES(?,?,?,?,?,?)',sub,who,sid==null?'*':String(sid),JSON.stringify(pl||null),rows[rows.length-1].id,Date.now()).run();
+  return n}catch(e){console.error('web push failed:',e&&e.message);return 0}}
+ /* alerts for many guardians at once (attendance, fee, result): the first batch goes out now, the rest waits in push_q */
+ async function pushAlerts(env,origin,sub,list){try{if(!pushOn(env))return;
+  const sids=[...new Set(list.map(a=>a.sid))].slice(0,400),rows=(await sq(env,"SELECT id,sid,ep,p256dh,auth FROM push_subs WHERE sub=?1 AND who='g' AND sid IN (SELECT value FROM json_each(?2)) LIMIT 800",sub,JSON.stringify(sids)).all()).results||[];if(!rows.length)return;
+  const by=new Map();for(const r of rows){if(!by.has(r.sid))by.set(r.sid,[]);by.get(r.sid).push(r)}
+  const cap=pcap(env),now=[],later=[];let used=0;
+  for(const a of list){const ds=by.get(a.sid);if(!ds)continue;const pl=await mkPl(env,origin,sub,{k:evKind(a.ev),x:a.x,at:Date.now(),sid:a.sid});
+   if(used+ds.length<=cap){used+=ds.length;now.push(pushSend(env,ds,pl))}else later.push(sq(env,'INSERT INTO push_q(sub,who,sid,pl,cur,at) VALUES(?,?,?,?,?,?)',sub,'g',a.sid,JSON.stringify(pl),'',Date.now()))}
+  await Promise.all(now);for(let i=0;i<later.length&&i<300;i+=40)await env.DB.batch(later.slice(i,i+40))}catch(e){console.error('alert push failed:',e&&e.message)}}
+ /* sends the next batch of a queued job; called from the live polls, at most once every 8 s per worker instance */
+ async function pushDrain(env){try{if(!pushOn(env)||hitMem('pqd',1,8000))return;
+  const j=await sq(env,'SELECT id,sub,who,sid,pl,cur FROM push_q WHERE at>? ORDER BY id LIMIT 1',Date.now()-864e5).first();
+  if(!j){if(Math.random()<.05)await sq(env,'DELETE FROM push_q WHERE at<=?',Date.now()-864e5).run();return}
+  const rows=await pushRows(env,j.sub,j.who,j.sid,j.cur,pcap(env));
+  if(!rows.length){await sq(env,'DELETE FROM push_q WHERE id=?',j.id).run();return}
+  const u=await sq(env,'UPDATE push_q SET cur=? WHERE id=? AND cur=?',rows[rows.length-1].id,j.id,j.cur).run();if(!(u.meta&&u.meta.changes))return; /* another instance took this batch */
+  let pl=null;try{pl=JSON.parse(j.pl)}catch{}await pushSend(env,rows,pl)}catch(e){console.error('push queue failed:',e&&e.message)}}
  async function pushKey(C){return J({key:vapidPub(C.env),on:!!(vapidPub(C.env)&&vapidPriv(C.env))})}
  async function pushSub(C){const b=C.b,ep=String(b.endpoint||'').slice(0,700);if(!PUSHHOST.test(ep))throw new Err(400,'invalid endpoint');let sub,who,sid;
   if(typeof b.token==='string'&&/^[0-9a-f]{48}$/.test(b.token)){const t=JSON.parse(await C.env.KV.get('gt:'+b.token)||'null');if(!t||t.who!=='guardian')throw new Err(401,'expired');sub=t.sub;who='g';sid=t.sid}
   else{const s=await need(C);sub=s.sub;who='s';sid=String(s.ph||'')}
   if(hitMem('psub:'+sub+':'+sid,30,3600000))throw new Err(429,'rate limited');const id=await sha(ep);
   if(b.off){await sq(C.env,'DELETE FROM push_subs WHERE id=? AND sub=?',id,sub).run();return J({ok:true})}
-  await sq(C.env,'INSERT INTO push_subs(id,sub,who,sid,ep,created) VALUES(?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET sub=excluded.sub,who=excluded.who,sid=excluded.sid,ep=excluded.ep',id,sub,who,sid,ep,iso()).run();return J({ok:true})}
+  const kk=isO(b.keys)?b.keys:{},pk=/^[A-Za-z0-9_-]{86,88}$/.test(String(kk.p256dh||''))?String(kk.p256dh):null,ak=/^[A-Za-z0-9_-]{22,24}$/.test(String(kk.auth||''))?String(kk.auth):null; /* browser keys: they let the server encrypt the real message into the push */
+  await sq(C.env,'INSERT INTO push_subs(id,sub,who,sid,ep,created,p256dh,auth) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET sub=excluded.sub,who=excluded.who,sid=excluded.sid,ep=excluded.ep,p256dh=COALESCE(excluded.p256dh,push_subs.p256dh),auth=COALESCE(excluded.auth,push_subs.auth)',id,sub,who,sid,ep,iso(),pk,ak).run();return J({ok:true,keys:!!(pk&&ak)})}
+/* old subscriptions (saved without keys) get an empty push: the service worker then asks for the newest message here */
+async function pushPeek(C){const{env}=C,ep=String(C.b.endpoint||'').slice(0,700);if(!PUSHHOST.test(ep)||hitMem('pk:'+C.ip,60,60000))return J({});
+ const r=await sq(env,'SELECT sub,who,sid FROM push_subs WHERE id=?',await sha(ep)).first();if(!r||r.who!=='g')return J({});
+ const[o,n]=await env.DB.batch([sq(env,"SELECT k,x,u,at FROM portal_out WHERE sub=?1 AND (sid=?2 OR sid='*') AND k IN ('m','b') ORDER BY id DESC LIMIT 1",r.sub,r.sid),sq(env,'SELECT title,body,created_at FROM notifications WHERE workspace_sub=?1 AND recipient_id=?2 ORDER BY created_at DESC LIMIT 1',r.sub,r.sid)]);
+ const a=o.results&&o.results[0],c=n.results&&n.results[0],ta=a?+a.at:0,tc=c?Date.parse(c.created_at)||0:0;if(Math.max(ta,tc)<Date.now()-18e5)return J({});
+ return J(ta>=tc?await mkPl(env,C.u.origin,r.sub,{k:a.k==='b'?(a.u?'urgent':'notice'):'msg',x:a.x,at:ta,sid:r.sid}):await mkPl(env,C.u.origin,r.sub,{k:evKind(c.title),x:c.body,at:tc,sid:r.sid}))}
+/* the institution's profile picture as a plain image URL, used as the push notification icon */
+async function instLogo(C){const{env,u}=C,sub=wsn(u.searchParams.get('s')),fb=()=>Response.redirect(u.origin+'/icon-192.png',302);if(!SUBRX.test(sub))return fb();
+ let l='';try{const r=await sq(env,"SELECT json_extract(d,'$.inst.logo') l FROM portal WHERE sub=? LIMIT 1",sub).first();l=String(r&&r.l||'');if(!l){const d=await sq(env,'SELECT logo l FROM directory WHERE sub=?',sub).first();l=String(d&&d.l||'')}}catch{return fb()}
+ if(/^https:\/\//.test(l))return Response.redirect(l,302);
+ const m=/^data:image\/(png|jpeg|jpg|webp|gif);base64,([A-Za-z0-9+\/=]+)$/.exec(l);if(!m)return fb();
+ let bin;try{bin=atob(m[2])}catch{return fb()}const a=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)a[i]=bin.charCodeAt(i);
+ return new Response(a,{headers:{'content-type':'image/'+(m[1]==='jpg'?'jpeg':m[1]),'cache-control':'public, max-age=86400','x-content-type-options':'nosniff','content-security-policy':"default-src 'none'"}})}
 async function gSend(C){
  const{b,env}=C,tk=String(b.token||'').slice(0,60),t=JSON.parse(await env.KV.get('gt:'+tk)||'null');if(!t||t.who!=='guardian')throw new Err(401,'expired');
  const x=String(b.text||'').replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g,'').trim().slice(0,1000);if(!x)throw new Err(400,'empty');
@@ -923,9 +998,9 @@ async function gSend(C){
  const n=await sq(env,'SELECT COUNT(*) AS n FROM portal_inbox WHERE sub=?',t.sub).first();if(n&&n.n>5000)throw new Err(429,'inbox full');
  const at=Date.now(),mt=gMeta(b),r=(await env.DB.batch([sq(env,'INSERT INTO portal_inbox(sub,sid,x,at,meta) VALUES(?,?,?,?,?)',t.sub,t.sid,x,at,mt),sq(env,'INSERT INTO portal_out(sub,sid,k,x,u,at,meta) VALUES(?,?,?,?,?,?,?)',t.sub,t.sid,'g',x,0,at,mt)]))[0]; /* portal_out copy (k=g) is what /api/g/data returns to the guardian; the inbox row is deleted once the institution has read it */
  if(Math.random()<.05)await sq(env,'DELETE FROM portal_out WHERE sub=?1 AND sid=?2 AND id<=(SELECT id FROM portal_out WHERE sub=?1 AND sid=?2 ORDER BY id DESC LIMIT 1 OFFSET 200)',t.sub,t.sid).run().catch(()=>{});
- bg(C,pushTo(env,t.sub,'s',null));return J({ok:true,id:r&&r.meta&&r.meta.last_row_id,at})}
+ bg(C,(async()=>{const pl=await mkPl(env,C.u.origin,t.sub,{k:'inbox',x,at,sid:t.sid}),s=await sq(env,"SELECT json_extract(d,'$.stu.name') n FROM portal WHERE sub=? AND sid=?",t.sub,t.sid).first().catch(()=>null);pl.t=(str(s&&s.n,60)||t.sid)+' · অভিভাবক';return pushTo(env,t.sub,'s',null,pl)})());return J({ok:true,id:r&&r.meta&&r.meta.last_row_id,at})}
 async function gInbox(C){
-  const sub=wsn(C.b.sub);if(!SUBRX.test(sub))throw new Err(401,'unauthorized');await tenantAuth(C,sub,['Admin']);
+  const sub=wsn(C.b.sub);if(!SUBRX.test(sub))throw new Err(401,'unauthorized');await tenantAuth(C,sub,['Admin']);bg(C,pushDrain(C.env));
   const env=C.env,rd=async()=>(await sq(env,'SELECT id,sid,x,at,meta FROM portal_inbox WHERE sub=? ORDER BY id LIMIT 500',sub).all()).results||[];
   let r=await rd(),sig=await gStSig(env,sub);const wt=Math.min(20000,Math.max(0,+C.b.wait||0)),w0=Date.now();
   if(wt&&typeof C.b.since==='string')while(!r.length&&sig===C.b.since&&Date.now()-w0<wt){await sleep(1500);r=await rd();sig=await gStSig(env,sub)} /* long-poll */
@@ -994,7 +1069,7 @@ async function admitInbox(C){
 /* ───────────── AI ───────────── */
 async function aiRun(C,s,system,prompt,max){
  const{env}=C;if(!env.AI)throw new Err(503,'AI not configured');
- if(hitMem('ai:'+C.ip,30,3600000)||await spend(env,'ai:'+s.sub,1,+env.AI_DAILY_CAP||300,86400))throw new Err(429,'rate limited');
+ if(hitMem('ai:'+C.ip,30,3600000)||await spend(env,'ai:'+s.sub,1,+env.AI_DAILY_CAP||300,86400))throw new Err(429,'rate limited');  {const cp=await confirmedPlan(env,s.sub).catch(()=>null),pn=cp&&cp.name||'',lim=/^starter/i.test(pn)?150:/^institution/i.test(pn)?600:/^sovereign/i.test(pn)?Infinity:30;if(lim!==Infinity&&await spend(env,'aim:'+s.sub,1,lim,2678400))throw new Err(429,'Monthly AI limit reached for your plan ('+lim+'). Upgrade under Pricing')}
  const r=await env.AI.run('@cf/meta/llama-3.1-8b-instruct',{messages:[{role:'system',content:system},{role:'user',content:prompt}],max_tokens:max}),text=String(r&&r.response||'').trim();
  if(!text)throw new Err(502,'empty response');return J({text})}
 async function aiPaper(C){
@@ -1084,7 +1159,7 @@ const R={
  '/api/preferences':prefs,'/api/schema/fields':schemaFields,'/api/audit':clientEvent,'/api/sync':clientEvent,
  '/api/notify':notifyLegacy,'/api/notify/sms':notifyCh,'/api/notify/whatsapp':notifyCh,'/api/notify/push':notifyCh,
  '/api/checkout':checkout,'/api/checkout/verify':checkoutVerify,'/api/pay/sms':paySms,'/api/backup':backup,'/api/stripe/webhook':stripeHook,
- '/api/g/sync':gSync,'/api/g/login':gLogin,'/api/g/data':gData,'/api/g/send':gSend,'/api/g/reply':gReply,'/api/g/notice':gNotice,'/api/g/inbox':gInbox,'/api/g/otp':gOtp,'/api/g/quick':gQuick,'/api/g/react':gReact,'/api/g/seen':gSeen,'/api/g/typing':gTyping,'/api/push/key':pushKey,'/api/push/sub':pushSub,
+ '/api/g/sync':gSync,'/api/g/login':gLogin,'/api/g/data':gData,'/api/g/send':gSend,'/api/g/reply':gReply,'/api/g/notice':gNotice,'/api/g/inbox':gInbox,'/api/g/otp':gOtp,'/api/g/quick':gQuick,'/api/g/react':gReact,'/api/g/seen':gSeen,'/api/g/typing':gTyping,'/api/push/key':pushKey,'/api/push/sub':pushSub,'/api/push/peek':pushPeek,
  '/api/inst/search':instSearch,'/api/inst/publish':instPublish,'/api/admit/apply':admitApply,'/api/admit/inbox':admitInbox,
  '/api/ai':aiPaper,'/api/ai/report':aiReport,
  '/api/founder/system-alert':fAlert,'/api/founder/webhook':fAlert,'/api/founder/email-fallback':fMail,'/api/founder/health':fHealth,'/api/founder/payment':fPayment,'/api/founder/plan-reminders':fRemind,'/api/founder/restore':fRestore};
@@ -1107,6 +1182,7 @@ async function api(req,env,ctx,u,ip,tenant){
     const st=rnd(16);await env.KV.put('os:'+st,'1',{expirationTtl:600});
     return J({url:'https://accounts.google.com/o/oauth2/v2/auth?'+new URLSearchParams({client_id:g.id,redirect_uri:u.origin+(u.searchParams.get('cb')==='auth'?'/auth/callback':'/api/oauth/google/callback'),response_type:'code',scope:'openid email profile',state:st,prompt:'select_account'})})}
    if(p==='/api/oauth/google/callback')return await oauthCallback(env,u);
+   if(p==='/api/inst/logo')return await instLogo(C);
    return J({error:'not found'},404)}
   if(req.method!=='POST')return J({error:'not found'},404);
   const h=R[p];if(!h)return J({error:'not found'},404);
@@ -1133,7 +1209,7 @@ const HERO='One Platform. Complete Control of Your Institution.';
 const INTRO='One workspace for enrollment, attendance, marks, fees and guardian communication. Every institution gets its own isolated subdomain and starts completely empty.';
 const PAYTXT='Pay with bKash, Nagad, Rocket, SSLCommerz, Visa, Mastercard, Stripe, PayPal, Bitcoin or USDT Vault.';
 const PRODS=[['Enrollment','Admissions, student profiles and guardian records.'],['Attendance Support','ID-card scan logs for students and ustads, with guardian alerts.'],['Learning Management','Routines, homework diaries and teacher feedback.'],['Assessment','Digital marksheets and instant merit lists.'],['Connected Intelligence','AI question papers, syllabus outlines and lesson plans.'],['Analytics and Insights','Progress graphs and class averages.'],['Finance Vault','Encrypted ledger, fee collection and receipts.'],['Secure Messaging','Guardian to teacher conversations.'],['Staff Management','Ustad records, salaries and credentials.'],['Security Center','Role-based access, tamper detection and threat alerts.']];
-const PLANS=[['Free','Up to 100 student records',0,['Student and staff directory','Attendance and marksheets','Isolated workspace and unique ID','Community support']],['Starter','Up to 500 students',29,['Student and staff directory','Attendance','Marksheets']],['Institution','Up to 1,500 students',79,['AI paper generator','Encrypted finance vault','Role-based team access']],['Sovereign','Unlimited, multi-campus',199,['Custom domain','Priority support']]]; const SOLS=[['Schools','Class routines, homework diaries, guardian alerts and report cards.'],['Madrassas','Hostel and meal tracking, Quran progress, Sadaqah ledger and ustad records.'],['Coaching centers','Batch attendance, mock tests and recurring fees.'],['Colleges','Departments, semester results, fee collection and staff payroll.'],['Universities','Faculty, department, program and batch hierarchy at large scale.']];
+const PLANS=[['Free','Up to 100 students',0,['Student and staff registers','Attendance with automatic guardian updates','Marksheets, fees and receipts','Real-time guardian chat and alerts','Student and guardian portals','Digital ID cards and notices','Homework, timetable, library, MCQ exams and Hifz log','30 AI generations a month','Isolated workspace, passkeys, MFA and four roles','Community support']],['Starter','Up to 500 students',29,['Everything in Free','Exams, transport, hostel and meals','Certificates and reports center','Assessment grading and batch or shift setup','AI report assistant and 150 AI generations a month']],['Institution','Up to 1,500 students',79,['Everything in Starter','Leave and payroll, inventory and assets','Admissions pipeline and alumni','Sadaqah and Zakat vault','Public website builder','Your logo and colours across the workspace','Credit, GPA, transcripts and thesis tracking','600 AI generations a month']],['Sovereign','Unlimited, multi-campus',199,['Everything in Institution','Unlimited students and AI generations','Live CCTV rooms','Multi-campus dashboard','Custom domain','Priority support']]]; const SOLS=[['Schools','Class routines, homework diaries, guardian alerts and report cards.'],['Madrassas','Hostel and meal tracking, Quran progress, Sadaqah ledger and ustad records.'],['Coaching centers','Batch attendance, mock tests and recurring fees.'],['Colleges','Departments, semester results, fee collection and staff payroll.'],['Universities','Faculty, department, program and batch hierarchy at large scale.']];
 const ALLSOL=[['Student records','Profiles, guardians, residence and results.'],['Staff management','Credentials, salaries and joining dates.'],['Financial ledgers','Income, expenses, dues, loans and receipts.'],['Institutional hierarchies','Campus, faculty, department, class and batch.']];
 const OSL=[['Data layer','One isolated workspace per institution, stored under its own subdomain.'],['Identity layer','Four roles with separate permissions and token sessions that end on inactivity.'],['Intelligence layer','AI papers, lesson plans, merit lists and progress analytics.'],['Communication layer','Guardian alerts under your branded sender name and secure messaging.']];
 const HELP=[['Set up your institution','Sign up, choose a subdomain, and save the recovery code shown once at the end.'],['Add team members','Settings and team: add teachers, accountants and guardians with their roles.'],['Add students and staff','Lists start empty. Press Add on Students or Staff.'],['Enter marks','Marksheets: type a subject, enter scores, and the merit list updates.'],['Collect fees','Finance vault lists students with a fee set. Press Collect to log it and print a receipt.'],['Locked out?','Contact the QVMPXT founder. A master key regenerates the administrator password.']];
@@ -1144,7 +1220,7 @@ const ENT=[
 ['ver','Version History & One-Click Rollback','Immutable pre-update snapshots for students, Hifz, results and fees. Compare versions and restore instantly.'],
 ['rbac','Access Control & Audit Trail','Six role tiers, a hash-chained activity log, passkey and OTP two-step sign-in and AES-256 tenant isolation.'],
 ['fields','Dynamic Custom Field Builder','Add Hifz Para, Kitab Khana, credit hours, thesis or any field to any module without waiting for a release.'],
-['notify','Multi-Channel Guardian Alerts','Attendance, report, receipt and emergency alerts by SMS, WhatsApp and Web Push, queued safely offline.'],
+['notify','Multi-Channel Guardian Alerts','Attendance, fee, result and notice alerts reach guardians as push notifications with your institution’s name, logo and the full message, and are also kept in the guardian’s inbox and notice board. iPhone needs the site added to the Home Screen first. If a guardian blocks notifications, share the notice by WhatsApp or SMS.'],
 ['sync','Offline-First Sync Engine','An encrypted local queue that syncs to the cloud automatically the moment connection returns.'],
 ['health','Founder Health & Schema Guard','Detects version changes and unreadable data early and alerts the founder before users notice.'],
 ['campus','Multi-Campus & Branch Analytics','Compare attendance, fees and results across every campus and drill into any branch.'],
@@ -1158,7 +1234,7 @@ const PAGES=[
  pg('/','home','','Home',HERO,'ClasSphera by QVMPXT is one secure platform for schools, madrasahs, coaching centers, colleges and universities: student records, attendance, marksheets, AI question papers, finance vault and guardian messaging.',()=>`<h1 class="text-3xl font-extrabold">${E(HERO)}</h1><p class="mt-3 text-sm mu">${E(BRAND)} · ${E(TAG)}</p><p class="mt-5 mu max-w-xl">${E(INTRO)}</p>${H2('Everything an institution runs on')}${grid(PRODS,'sm:grid-cols-2 lg:grid-cols-3')}${H2('Built for isolation and trust')}${grid(TRUST)}${H2('Pricing')}${plans()}`,'1.0','weekly'),
  pg('/login','home','login','Login','Log in to your institution workspace','ClasSphera by QVMPXT login: sign in to your school, madrasah, college or university workspace with two-step verification, passkeys and authenticator codes.',()=>`${H1('Login')}<p class="max-w-2xl">Sign in to your institution workspace with your institution address, phone number, email and secure password. New devices are verified with a one-time code, an authenticator app or a fingerprint / Face ID passkey.</p>`,'0.9','monthly'),
  pg('/signup','home','signup','Sign Up','Create your institution workspace','Sign up for ClasSphera by QVMPXT in three steps and get an isolated, encrypted workspace with its own subdomain, free for up to 100 student records.',()=>`${H1('Sign Up')}<p class="max-w-2xl">Create your institution in three steps: institution details, address and administrator. Every workspace gets its own subdomain, a unique secure ID and a recovery code, and starts completely empty.</p>${plans()}`,'0.9','monthly'),
- pg('/guardian-signup','guard','guardian-signup','Guardian Sign Up','Guardian sign in and registration','ClasSphera by QVMPXT guardian portal: parents see only their own child’s attendance, marks, fees, notices and secure messages with the school.',()=>`${H1('Guardian Sign Up')}<p class="max-w-2xl">Parents and guardians sign in with the institution name, the student’s admission ID, the registered mobile number and a secret PIN given by the institution. You see only your own child’s records.</p>`,'0.8','monthly'),
+ pg('/guardian-signup','guard','guardian-signup','Guardian Sign Up','Guardian sign in and registration','ClasSphera by QVMPXT guardian portal: parents see only their own child’s attendance, marks, fees, notices and secure messages with the school.',()=>`${H1('Guardian Sign Up')}<p class="max-w-2xl">Parents and guardians sign in with the registered mobile number and the secret PIN given by the institution. Students sign in with their admission ID and secret PIN. You see only your own child’s records.</p>`,'0.8','monthly'),
  pg('/student-signup','guard','student-signup','Student Sign Up','Student sign in and registration','ClasSphera by QVMPXT student portal: students open their own routine, homework, marksheet and Quran progress with an admission ID and PIN.',()=>`${H1('Student Sign Up')}<p class="max-w-2xl">Students sign in with the institution name, admission ID or roll number and a secret PIN. The student portal shows only your own routine, homework, marks and progress.</p>`,'0.8','monthly'),
  pg('/connect','connect','','Connect Us','Connect with the ClasSphera founder','Contact ClasSphera by QVMPXT: founder phone, WhatsApp and email, help and support, feedback, security guidelines and terms.',()=>`${H1('Connect Us')}<div class="glass p-5 max-w-xl"><p><b>${E(FOUNDER)}</b> · Sovereign Founder, QVMPXT</p><p class="mt-2"><a href="mailto:${FOUNDER_MAIL}">${FOUNDER_MAIL}</a></p><p><a href="tel:${FOUNDER_PHONE}">${FOUNDER_PHONE}</a></p></div>${H2('Help & support')}${grid(HELP)}`,'0.8','monthly'),
  pg('/download','home','app-download','App Download','Download and install the ClasSphera app','Install ClasSphera by QVMPXT on your phone or computer for fast, offline-ready access to your institution workspace.',()=>`${H1('App Download')}<p class="max-w-2xl">Install ClasSphera as an app: choose “Add to Home screen” on Android and iOS, or “Install app” in desktop Chrome and Edge. It works offline and syncs when you reconnect.</p>`,'0.7','monthly'),
@@ -1191,8 +1267,16 @@ self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(k=>Promise.a
 self.addEventListener('fetch',e=>{const r=e.request;if(r.method!=='GET')return;const u=new URL(r.url);if(u.origin!==location.origin||u.pathname.startsWith('/api/'))return;
  if(r.mode==='navigate'){e.respondWith(fetch(r).then(x=>{if(x.ok){const c=x.clone();caches.open(V).then(h=>h.put('/',c))}return x}).catch(()=>caches.match('/').then(x=>x||new Response('Offline',{status:503,headers:{'content-type':'text/plain'}}))));return}
  if(/\\.(png|svg|ico|webmanifest|woff2?|css|js)$/.test(u.pathname)&&u.pathname!=='/sw.js'){e.respondWith(caches.open(V).then(c=>c.match(r).then(h=>{const f=fetch(r).then(x=>{if(x.ok)c.put(r,x.clone());return x}).catch(()=>h);return h||f})))}});
-self.addEventListener('push',e=>{e.waitUntil(self.registration.showNotification('ClasSphera',{body:'You have a new message',icon:'/icon-192.png',badge:'/icon-192.png',tag:'cs-msg',renotify:true}))});
-self.addEventListener('notificationclick',e=>{e.notification.close();e.waitUntil(self.clients.matchAll({type:'window',includeUncontrolled:true}).then(l=>{for(const c of l){if('focus' in c)return c.focus()}return self.clients.openWindow('/')}))});`;
+const CSL={notice:'📢 নোটিস',urgent:'🚨 জরুরি নোটিস',attendance:'✅ হাজিরা',fee:'💳 ফি',result:'🎓 রেজাল্ট'};
+function csShow(d){d=d||{};const p=CSL[d.k],b=(p?p+'\\n':'')+(d.b||'You have a new message');return self.registration.showNotification(d.t||'ClasSphera',{body:b,icon:d.i||'/icon-192.png',badge:'/icon-192.png',tag:d.g||'cs-msg',renotify:true,requireInteraction:d.k==='urgent',vibrate:[120,60,120],timestamp:d.at||Date.now(),lang:'bn',data:d})}
+self.addEventListener('push',e=>{e.waitUntil((async()=>{let d=null;try{d=e.data?e.data.json():null}catch(_){}
+ if(!d||!d.b){try{const s=await self.registration.pushManager.getSubscription();if(s){const r=await fetch('/api/push/peek',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({endpoint:s.endpoint})});if(r.ok){const j=await r.json();if(j&&j.b)d=j}}}catch(_){}}
+ await csShow(d)})())});
+self.addEventListener('notificationclick',e=>{e.notification.close();const d=e.notification.data||{};e.waitUntil((async()=>{
+ try{const c=await caches.open('csnotif');await c.put('/__csn',new Response(JSON.stringify(d),{headers:{'content-type':'application/json'}}))}catch(_){}
+ const l=await self.clients.matchAll({type:'window',includeUncontrolled:true});
+ for(const c of l){if('focus' in c){try{c.postMessage({cs:'notif',d:d})}catch(_){}return c.focus()}}
+ return self.clients.openWindow('/?csn=1')})())});`;
 /* PNG icons rendered from the logo geometry (no external files needed) */
 const HEXV=[[50,5],[89,27.5],[89,72.5],[50,95],[11,72.5],[11,27.5]];
 const HEXE=HEXV.map((a,i)=>{const b=HEXV[(i+1)%6],dx=b[0]-a[0],dy=b[1]-a[1],l=Math.hypot(dx,dy),nx=dy/l,ny=-dx/l;return[nx,ny,nx*a[0]+ny*a[1]]});
@@ -1221,12 +1305,12 @@ const ICONS={'/favicon-48x48.png':48,'/favicon.ico':48,'/icon-192.png':192,'/ico
 /* structured data: brand, tagline, navigation (sitelinks), breadcrumbs */
 const LD=(p,host)=>{
  const org={'@type':'Organization','@id':SITE+'/#org',name:'QVMPXT',url:SITE+'/',slogan:TAG,brand:{'@type':'Brand',name:'ClasSphera',slogan:TAG},logo:SITE+'/icon-512.png',email:FOUNDER_MAIL,telephone:FOUNDER_PHONE,founder:{'@type':'Person',name:FOUNDER}};
- const web={'@type':'WebSite','@id':SITE+'/#website',url:SITE+'/',name:'ClasSphera',alternateName:['Classphera','ClassSphera','Class Sphera',BRAND],description:TAG,publisher:{'@id':SITE+'/#org'},inLanguage:'en'};
+ const web={'@type':'WebSite','@id':SITE+'/#website',url:SITE+'/',name:'ClasSphera',alternateName:['Classphera','ClassSphera','Class Sphera',BRAND],description:TAG,publisher:{'@id':SITE+'/#org'},inLanguage:'en'};if(p.bn)web.keywords=BN_KW;
  const nav=['/','/login','/signup','/guardian-signup','/student-signup','/connect','/download','/enterprise'];
- const g=[web,org,{'@type':'WebPage','@id':SITE+p.path+'#webpage',url:SITE+p.path,name:p.title,description:p.desc,isPartOf:{'@id':SITE+'/#website'},inLanguage:'en'},
+ const g=[web,org,{'@type':'WebPage','@id':SITE+p.path+'#webpage',url:SITE+p.path,name:p.title,description:p.bn?p.desc+BN_DESC:p.desc,isPartOf:{'@id':SITE+'/#website'},inLanguage:'en'},
   {'@type':'ItemList','@id':SITE+'/#navigation',name:'ClasSphera main navigation',itemListElement:nav.map((x,i)=>({'@type':'ListItem',position:i+1,item:{'@type':'SiteNavigationElement','@id':SITE+x+'#nav',name:BYPATH[x].name,description:BYPATH[x].desc,url:SITE+(x==='/'?'/':x)}}))}];
  if(p.path!=='/'){const c=[{'@type':'ListItem',position:1,name:'Home',item:SITE+'/'}];if(p.path.startsWith('/enterprise/'))c.push({'@type':'ListItem',position:2,name:'Enterprise Suite',item:SITE+'/enterprise'},{'@type':'ListItem',position:3,name:p.name,item:SITE+p.path});else c.push({'@type':'ListItem',position:2,name:p.name,item:SITE+p.path});g.push({'@type':'BreadcrumbList',itemListElement:c})}
- const app={'@type':'SoftwareApplication',name:'ClasSphera',applicationCategory:'EducationalApplication',operatingSystem:'Web',url:SITE+'/',description:TAG,publisher:{'@id':SITE+'/#org'}};
+ const app={'@type':'SoftwareApplication',name:'ClasSphera',applicationCategory:'EducationalApplication',operatingSystem:'Web',url:SITE+'/',description:TAG,publisher:{'@id':SITE+'/#org'}};if(p.bn)app.keywords=BN_KW;
  if(p.path==='/pricing'||p.path==='/')app.offers=PLANS.map(x=>({'@type':'Offer',name:x[0],description:x[1],price:String(x[2]),priceCurrency:'USD'}));
  g.push(app);return'<script type="application/ld+json">'+JSON.stringify({'@context':'https://schema.org','@graph':g}).replace(/</g,'\\u003c')+'</script>'};
 
@@ -1274,16 +1358,16 @@ async function page(req,env,ctx,u,main,p,o){
  o=o||{};const host=o.host||u.hostname,cache=typeof caches!=='undefined'?caches.default:null,ck=new Request('https://cache.classphera.invalid/'+APP_V+'/'+host+p.path+(o.sub?'?t='+o.sub+'&n='+encodeURIComponent(o.title||''):''));
  if(cache){const h=await cache.match(ck);if(h)return new Response(h.body,{status:200,headers:htmlHeaders(main)})}
  const base=await env.ASSETS.fetch(new Request(u.origin+'/'));if(!base.ok)return base;
- const url=o.sub?`https://${host}/`:SITE+(p.path==='/'?'/':p.path),T=o.sub?{title:o.title,desc:o.desc}:p,set=(a,v)=>({element(e){e.setAttribute(a,v)}});
+ const url=o.sub?`https://${host}/`:SITE+(p.path==='/'?'/':p.path),T=o.sub?{title:o.title,desc:o.desc}:p,SD=o.sub?T.desc:T.desc+BN_DESC,set=(a,v)=>({element(e){e.setAttribute(a,v)}});
  const rw=new HTMLRewriter()
   .on('title',{element(e){e.setInnerContent(T.title)}})
-  .on('meta[name="description"]',set('content',T.desc)).on('meta[property="og:title"]',set('content',T.title)).on('meta[property="og:description"]',set('content',T.desc))
+  .on('meta[name="description"]',set('content',SD)).on('meta[property="og:title"]',set('content',T.title)).on('meta[property="og:description"]',set('content',SD))
   .on('meta[name="twitter:title"]',set('content',T.title)).on('meta[name="twitter:description"]',set('content',T.desc))
   .on('link[rel="canonical"]',set('href',url)).on('meta[property="og:url"]',set('content',url))
   .on('script[type="application/ld+json"]',{element(e){e.remove()}});
  const rw2=main?rw:rw.on('meta[name="robots"]',set('content','noindex,nofollow')),
  tenantJs=o.sub?`<script>try{history.replaceState(null,'',location.pathname+'?sub=${o.sub}'+location.hash)}catch(e){}</script>`:'';
- const out=rw2.on('head',{element(e){e.append('<link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="manifest" href="/manifest.webmanifest"><meta property="og:image" content="'+SITE+'/icon-512.png"><meta name="twitter:image" content="'+SITE+'/icon-512.png"><meta property="og:locale" content="en"><meta name="cs-app-version" content="'+APP_V+'">'+LD(o.sub?{...p,path:'/',title:T.title,desc:T.desc}:p)+BOOT()+tenantJs+'<style>body:not([data-view="home"]) #cs-nav{display:none!important}</style>',{html:true})}})
+ const out=rw2.on('head',{element(e){e.append('<link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="manifest" href="/manifest.webmanifest"><meta property="og:image" content="'+SITE+'/icon-512.png"><meta name="twitter:image" content="'+SITE+'/icon-512.png"><meta property="og:locale" content="en"><meta name="cs-app-version" content="'+APP_V+'">'+(o.sub?'':'<meta name="keywords" content="ClasSphera, Classphera, class sphera, QVMPXT, school management software, madrasah management, institution management system, student attendance, marksheet, fee collection, '+BN_KW+'">')+LD(o.sub?{...p,path:'/',title:T.title,desc:T.desc}:{...p,bn:1})+BOOT()+tenantJs+'<style>body:not([data-view="home"]) #cs-nav{display:none!important}</style>',{html:true})}})
   .on('main#app',{element(e){e.setInnerContent(p.body(),{html:true})}})
   .on('footer#foot',{element(e){if(p.path==='/'&&!o.sub)e.after(NAV,{html:true})}})
   .on('body',{element(e){e.append(CLIENT_PATCH,{html:true})}}).transform(base);
