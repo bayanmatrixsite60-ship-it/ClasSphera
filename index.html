@@ -4197,12 +4197,24 @@ textarea{resize:vertical}
 
 
 /* header: long button labels (Arabic, Russian, German...) shrink the logo text instead of pushing the menu off-screen */
+/* header: the site name is ALWAYS shown in full. The name never shrinks/clips; its size scales with the screen,
+   and the auth buttons (not the name) give way on very narrow phones. */
 .hbar{min-width:0}
-.hbar .brand{flex:0 1 auto;min-width:0;overflow:hidden}
-.hbar .brand .hd{min-width:0;overflow:hidden;text-overflow:ellipsis}
-.hgrp{max-width:100%}
+.hbar .brand{flex:none!important;min-width:max-content;overflow:visible!important;margin-inline-end:auto}
+.hbar .brand .hd{display:inline-block!important;flex:none;min-width:max-content;overflow:visible!important;text-overflow:clip!important;white-space:nowrap!important;font-size:clamp(.8rem,4.1vw,1.12rem)!important;letter-spacing:.01em}
+.hgrp{max-width:100%;flex:0 1 auto;min-width:0}
+#authBtns{min-width:0;display:flex}
+.hgrp .pill{flex:0 1 auto;min-width:0}
+.hgrp .pill button{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 @media (max-width:420px){
   .hgrp .pill button{padding-inline:.45rem!important;font-size:.7rem!important}
+}
+@media (max-width:360px){
+  .hdr{padding-inline:.35rem!important}
+  .hbar{gap:.15rem!important;padding-inline:.4rem!important}
+  #hl{width:22px!important}
+  .hgrp .pill button{padding-inline:.35rem!important;font-size:.64rem!important}
+  .hgrp #burger{padding-inline:.35rem!important}
 }
 
 /* small phones */
