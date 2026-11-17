@@ -1227,14 +1227,19 @@ const lk=s=>'%'+String(s).replace(/[\\%_]/g,'\\$&')+'%';
 const okLogo=l=>/^https:\/\//.test(l||'')||(/^data:image\//.test(l||'')&&String(l).length<60000)?String(l):'';
 async function instSearch(C){
  const{b,env,ip}=C;if(hitMem('is:'+ip,60,600000))throw new Err(429,'rate limited');
- const q=str(b.q,80),loc=str(b.loc,80),tk=/^coach/i.test(b.type)?'coaching':String(b.type||'').toLowerCase().split(' ')[0],country=str(b.country,60).toLowerCase();
- let sql='SELECT sub,name,itype,country,city,address,phone,email,wa,admission,about,logo FROM directory WHERE listed=1';const a=[];
- if(q){const l=lk(q);sql+=" AND (name LIKE ? ESCAPE '\\' OR city LIKE ? ESCAPE '\\' OR country LIKE ? ESCAPE '\\' OR address LIKE ? ESCAPE '\\' OR itype LIKE ? ESCAPE '\\')";a.push(l,l,l,l,l)}
- if(TYK[tk]){sql+=' AND itype LIKE ?';a.push(TYK[tk])}
- if(country&&country!=='all'&&country!=='global'){const al=CAL[country]||[country];sql+=' AND ('+al.map(()=>"country LIKE ? ESCAPE '\\'").join(' OR ')+')';al.forEach(x=>a.push(lk(x)))}
- if(loc){const l=lk(loc);sql+=" AND (city LIKE ? ESCAPE '\\' OR address LIKE ? ESCAPE '\\' OR country LIKE ? ESCAPE '\\')";a.push(l,l,l)}
- sql+=' ORDER BY name LIMIT 50';
- const r=(await sq(env,sql,...a).all()).results||[];return J({items:r.map(x=>({sub:x.sub,name:x.name,type:x.itype,country:x.country,city:x.city,address:x.address,phone:x.phone,email:x.email,wa:x.wa,admission:x.admission,about:x.about,logo:x.logo}))})}
+ const q=str(b.q,80),loc=str(b.loc,80),tk=/^coach/i.test(b.type)?'coaching':String(b.type||'').toLowerCase().split(' ')[0],country=str(b.country,60).toLowerCase(),ES=" ESCAPE '\\'";
+ /* A = institutions that published a profile (listed=1). B = real registered workspaces that never published one (they are shown by name, type and country only, so search is never empty; an institution that was explicitly unlisted stays hidden). */
+ let sa='SELECT sub,name,itype,country,city,address,phone,email,wa,admission,about,logo FROM directory WHERE listed=1',
+  sb="SELECT i.sub AS sub,i.name AS name,i.itype AS itype,i.country AS country,'' AS city,'' AS address,'' AS phone,'' AS email,'' AS wa,'open' AS admission,'' AS about,'' AS logo FROM institutions i JOIN ws_meta m ON m.sub=i.sub WHERE NOT EXISTS(SELECT 1 FROM directory d WHERE d.sub=i.sub)";const a=[],c=[];
+ if(q){const l=lk(q);sa+=' AND (name LIKE ?'+ES+' OR city LIKE ?'+ES+' OR country LIKE ?'+ES+' OR address LIKE ?'+ES+' OR itype LIKE ?'+ES+')';a.push(l,l,l,l,l);
+  sb+=' AND (i.name LIKE ?'+ES+' OR i.country LIKE ?'+ES+' OR i.itype LIKE ?'+ES+')';c.push(l,l,l)}
+ if(TYK[tk]){sa+=' AND itype LIKE ?';a.push(TYK[tk]);sb+=' AND i.itype LIKE ?';c.push(TYK[tk])}
+ if(country&&country!=='all'&&country!=='global'){const al=CAL[country]||[country];sa+=' AND ('+al.map(()=>'country LIKE ?'+ES).join(' OR ')+')';al.forEach(x=>a.push(lk(x)));
+  sb+=' AND ('+al.map(()=>'i.country LIKE ?'+ES).join(' OR ')+')';al.forEach(x=>c.push(lk(x)))}
+ if(loc){const l=lk(loc);sa+=' AND (city LIKE ?'+ES+' OR address LIKE ?'+ES+' OR country LIKE ?'+ES+')';a.push(l,l,l);
+  sb+=' AND i.country LIKE ?'+ES;c.push(l)}
+ const sql='SELECT * FROM ('+sa+' UNION ALL '+sb+') ORDER BY name LIMIT 50';
+ const r=(await sq(env,sql,...a,...c).all()).results||[];return J({items:r.map(x=>({sub:x.sub,name:x.name,type:x.itype,country:x.country,city:x.city,address:x.address,phone:x.phone,email:x.email,wa:x.wa,admission:x.admission,about:x.about,logo:x.logo}))})}
 async function instPublish(C){
  const{b,env}=C,sub=wsn(b.sub);if(!SUBRX.test(sub))throw new Err(401,'unauthorized');await tenantAuth(C,sub,['Admin']);
  const p=isO(b.profile)?b.profile:{};if(!str(p.name,120))throw new Err(400,'name is required');
@@ -1246,7 +1251,9 @@ async function instPublish(C){
 async function admitApply(C){
  const{b,env,ip}=C,sub=wsn(b.sub),a=isO(b.applicant)?b.applicant:{};if(!SUBRX.test(sub))throw new Err(404,'institution not found');
  if(hitMem('ad:'+ip,6,3600000)||await hit(env,'ad:'+ip,5,3600)||await hit(env,'ads:'+sub,100,3600))throw new Err(429,'Too many applications. Try again later.');
- const d=await sq(env,'SELECT name,email,admission FROM directory WHERE sub=? AND listed=1',sub).first();
+ let d=await sq(env,'SELECT name,email,admission FROM directory WHERE sub=? AND listed=1',sub).first();
+ if(!d){const w=await sq(env,'SELECT i.name AS name FROM institutions i JOIN ws_meta m ON m.sub=i.sub WHERE i.sub=? AND NOT EXISTS(SELECT 1 FROM directory d WHERE d.sub=i.sub)',sub).first(); /* registered workspace with no published profile: the request goes to its Admin inbox and the admin's e-mail */
+  if(w){const ad=await sq(env,"SELECT mail FROM ws_index WHERE sub=? AND role='Admin' AND mail<>'' LIMIT 1",sub).first();d={name:w.name,email:ad&&ad.mail||'',admission:'open'}}}
  if(!d)throw new Err(404,'institution not found');if(d.admission==='closed')throw new Err(403,'Admissions are closed');
  const v={name:str(a.name,80),dob:str(a.dob,12),cls:str(a.cls,80),guardian:str(a.guardian,80),phone:str(a.phone,24),email:str(a.email,80),place:str(a.place,80),note:str(a.note,500)};
  if(!v.name||!v.cls||!v.guardian||!PHONERX.test(v.phone.replace(/[\s-]/g,'')))throw new Err(400,'Fill in name, class, guardian and a valid phone');
