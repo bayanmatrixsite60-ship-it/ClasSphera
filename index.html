@@ -810,6 +810,9 @@ body.wsx #wsbar{display:flex;align-items:center;justify-content:space-between;di
 #wsbar .wsl{flex:none;display:grid;place-items:center;width:46px;height:46px;padding:2px;border:0;border-radius:50%;overflow:hidden;cursor:pointer;background:linear-gradient(135deg,#818cf8,#34d399);-webkit-tap-highlight-color:transparent}
 #wsbar .wsl>img,#wsbar .wsl>span{display:grid;place-items:center;width:100%;height:100%;border-radius:50%;object-fit:cover;background:#10163f;color:#fff;font-weight:800;font-size:1.15rem}
 #wsbar #wsburger{width:46px;height:46px;display:grid;place-items:center;padding:0;border-radius:12px}
+/* inside the institution account: no Return button on top, content moves up into its place */
+body.wsx #back{display:none!important}
+body.wsx:has(#back:not([hidden])) main#app{padding-top:1rem!important}
 </style>
 </head>
 <body>
@@ -1568,8 +1571,8 @@ window.gLogin=async()=>{const sid=(($('#gid')||{}).value||'').trim().toUpperCase
  if(bad(sid+ph))return;
  try{const j=await gp('/api/g/login',G.w==='student'?{who:'student',sid,pin}:{who:'guardian',phone:ph,pin});G.token=j.token;G.who=j.who;G.d=j.d;G.sub=j.sub||'';gvMerge(G.d);G.cam='';G.camCt='';
   if(j.d&&j.d.cam&&j.d.cam.ct){try{G.cam=await openCam(pin,j.d.cam);G.camCt=j.d.cam.ct}catch(e){}}
-  G.m=new Date();nav('guard')}catch(e){toast(e.message)}};
-window.gOut=()=>{G.token=null;G.d=null;G.cam='';nav('home')};
+  try{await window.csGvPull()}catch(e){}G.m=new Date();nav('guard')}catch(e){toast(e.message)}};
+window.gOut=()=>{try{window.csGvFlush&&window.csGvFlush()}catch(e){}G.token=null;G.d=null;G.cam='';nav('home')};
 window.gRefresh=async()=>{try{const j=await gp('/api/g/data',{token:G.token});G.d=j.d;gvMerge(G.d);if(!(j.d.cam&&j.d.cam.ct===G.camCt))G.cam='';render();toast('Updated')}catch(e){toast('Session ended. Please sign in again.');gOut()}};
 /* guardian's own sent messages are kept on this device so a refresh / 5 s poll never drops them (the server only returns them after the institution publishes) */
 window.gvKeepKey=d=>'cs_gv_'+(G.sub||'')+'_'+((d&&d.stu&&d.stu.id)||'');
@@ -1593,10 +1596,8 @@ window.gPlay=()=>{const v=$('#gv');if(!v||!G.cam)return;const u=G.cam,box=$('#gc
  if(window.Hls)return run();const s=document.createElement('script');s.src='https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.5.13/hls.min.js';s.onload=run;s.onerror=()=>msg('Player could not load.');document.head.appendChild(s)};
 const feeCard=()=>{const f=G.d.fees;if(!f||!f.items||!f.items.length)return sec('Fees &amp; digital vault','<p class="text-sm mu">No fee schedule has been published yet.</p>');
  const tot=f.items.reduce((a,b)=>a+(+b.a||0),0),pd=f.paid==null?null:+f.paid,due=pd==null?tot:Math.max(0,tot-pd),cur=esc(f.cur||'BDT');
- return sec('Fees &amp; digital vault',`<div class="text-sm">${f.items.map(i=>`<div class="flex justify-between py-1 border-b border-white/10"><span>${esc(i.n)}</span><b>${cur} ${+i.a||0}</b></div>`).join('')}<div class="flex justify-between py-2"><span>Total this month</span><b>${cur} ${tot}</b></div><div class="flex justify-between"><span>Paid</span><b class="ok">${pd==null?'Awaiting confirmation':cur+' '+pd}</b></div><div class="flex justify-between"><span>Due</span><b>${cur} ${due}</b></div></div>${due>0?`<div class="flex flex-wrap gap-2 mt-3">${['bKash','Nagad','SSLCommerz','Stripe'].map(g=>`<button class="btn" onclick="gPay('${g}',${due})">Pay with ${g}</button>`).join('')}</div>`:''}${(f.hist&&f.hist.length)?`<div class="text-xs mu mt-4 mb-1">Payment ledger</div><table class="stt w-full"><tr><th>Date</th><th>Receipt</th><th>Amount</th></tr>${f.hist.map(h=>`<tr><td>${esc(h.d)}</td><td>${esc(h.rc)}</td><td>${cur} ${+h.a||0}</td></tr>`).join('')}</table>`:''}${pd>0?'<button class="btn pri mt-3" onclick="gRecpt()">Download PDF receipt</button>':''}`)};
-window.gPay=(g,due)=>modal(`<h3 class="text-lg font-bold">Pay · ${esc(g)}</h3><label>Amount</label><input id="gpa" type="number" value="${due}" min="1">${g==='Stripe'||g==='SSLCommerz'?'':'<label>Transaction ID (TxID)</label><input id="gpt" placeholder="From your payment app">'}<button class="btn pri w-full mt-4" onclick="gDoPay('${g}')">Continue</button>`);
-window.gDoPay=async g=>{const d=G.d,a=+$('#gpa').value,tx=($('#gpt')||{}).value||'';if(!(a>0)||bad(tx))return toast('Enter a valid amount');if(g!=='Stripe'&&g!=='SSLCommerz'&&!tx.trim())return toast('Enter the TxID');
- try{const j=await gp('/api/checkout',{gateway:g,item:`${d.stu.name} (${d.stu.id}) fees ${mon()}`,usd:a,cur:/^[A-Z]{3}$/.test(d.fees.cur||'')?d.fees.cur:'BDT',txid:tx,sub:G.sub,institutionId:d.inst.name});close();if(j.url)location.href=j.url;else toast(j.message)}catch(e){toast(e.message)}};
+ return sec('Fees &amp; digital vault',`<div class="text-sm">${f.items.map(i=>`<div class="flex justify-between py-1 border-b border-white/10"><span>${esc(i.n)}</span><b>${cur} ${+i.a||0}</b></div>`).join('')}<div class="flex justify-between py-2"><span>Total this month</span><b>${cur} ${tot}</b></div><div class="flex justify-between"><span>Paid</span><b class="ok">${pd==null?'Awaiting confirmation':cur+' '+pd}</b></div><div class="flex justify-between"><span>Due</span><b>${cur} ${due}</b></div></div>${pzCards()}${(f.hist&&f.hist.length)?`<div class="text-xs mu mt-4 mb-1">Payment ledger</div><table class="stt w-full"><tr><th>Date</th><th>Receipt</th><th>Amount</th></tr>${f.hist.map(h=>`<tr><td>${esc(h.d)}</td><td>${esc(h.rc)}</td><td>${cur} ${+h.a||0}</td></tr>`).join('')}</table>`:''}${pd>0?'<button class="btn pri mt-3" onclick="gRecpt()">Download PDF receipt</button>':''}`)};
+window.gPay=()=>{window.pzOpen&&pzOpen('FI@'+mon())};window.gDoPay=window.gPay; /* fee money no longer goes through /api/checkout (platform billing) */
 window.gRecpt=()=>{const d=G.d,f=d.fees,cur=esc(f.cur||'BDT');modal(`<div class="text-center"><div class="hd font-extrabold text-xl">${esc(d.inst.name)}</div><div class="text-xs mu">Fee receipt · ${mon()}${f.rc&&f.rc.length?' · '+esc(f.rc[f.rc.length-1]):''}</div><div class="glass p-3 my-3 text-sm text-left">${esc(d.stu.name)} · ${esc(d.stu.id)}<br>${f.items.map(i=>esc(i.n)+': '+cur+' '+(+i.a||0)).join('<br>')}<br><b>Paid: ${cur} ${+f.paid||0}</b></div><button class="btn pri w-full" onclick="gPrint()">Save as PDF / Print</button></div>`)};
 window.gPrint=()=>{document.body.classList.add('gp');onafterprint=()=>document.body.classList.remove('gp');print()};
 const acadCard=()=>{const d=G.d,r=d.rec||{},L=(a,h)=>(a&&a.length)?`<div class="mb-3"><div class="text-xs mu mb-1">${h}</div>${a.map(x=>`<div class="glass p-2 mb-1 text-sm">${esc(x)}</div>`).join('')}</div>`:'',m=Object.entries(d.marks||{});
@@ -1609,7 +1610,30 @@ window.gSend=async()=>{const x=$('#gmg').value.trim();if(!x||bad(x))return;try{c
 /* ---- 5. Guardian Isolated View: header, profile, photos, messaging page ---- */
 const gvKey=()=>'cs_gp_'+G.sub+'_'+((G.d&&G.d.stu&&G.d.stu.id)||'')+'_'+G.who;
 let gvR0=null,gvO0={};const gvGet=()=>{try{const r=localStorage.getItem(gvKey())||'{}';if(r!==gvR0){const o=JSON.parse(r);gvO0=o&&typeof o==='object'?o:{};gvR0=r}return typeof structuredClone==='function'?structuredClone(gvO0):JSON.parse(r)}catch(e){gvR0=null;return{}}};
-const gvSet=o=>{try{localStorage.setItem(gvKey(),JSON.stringify(o));return true}catch(e){toast('Could not save on this device (storage is full).');return false}};
+const gvSet=o=>{try{localStorage.setItem(gvKey(),JSON.stringify(o));window.csGvPush&&window.csGvPush();return true}catch(e){toast('Could not save on this device (storage is full).');return false}};
+/* ---- cloud copy of the profile: photos, details, homework ticks and study hub are saved on the server per guardian/student, so every device shows the same after sign-in. Payments and receipts already live on the server and are left out. ---- */
+(()=>{const SK={pq:1,pay:1},rd=(k,d)=>{try{const r=localStorage.getItem(k);return r==null?d:JSON.parse(r)}catch(e){return d}},wr=(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}},
+ snap=()=>{const p=rd(gvKey(),{}),o={};if(p&&typeof p==='object')for(const k of Object.keys(p))if(!SK[k])o[k]=p[k];const h=rd(gvKey()+'_hub',{}),w=rd(gvHwKey(),[]);return{p:o,hub:h&&typeof h==='object'&&!Array.isArray(h)?h:{},hw:Array.isArray(w)?w:[]}},
+ has=x=>!!x&&((x.p&&Object.keys(x.p).length)||(x.hub&&Object.keys(x.hub).length)||(x.hw&&x.hw.length));
+ let tm=0,sent=null;
+ const send=async()=>{tm=0;if(!G.token||!G.d)return;const k=gvKey(),s=snap(),j=JSON.stringify(s);if(sent&&sent.k===k&&sent.j===j){try{localStorage.removeItem(k+'_dirty')}catch(e){}return}
+  try{const r=await gp('/api/g/profile',{token:G.token,op:'put',prof:s});sent={k,j};try{localStorage.removeItem(k+'_dirty');localStorage.setItem(k+'_sync',String(r.updated||Date.now()))}catch(e){}}catch(e){}};
+ window.csGvPush=()=>{if(!G.token||!G.d)return;try{localStorage.setItem(gvKey()+'_dirty','1')}catch(e){}clearTimeout(tm);tm=setTimeout(send,2000)};
+ window.csGvFlush=()=>{if(tm){clearTimeout(tm);send()}};
+ window.csGvPull=async()=>{const k=gvKey(),j=await gp('/api/g/profile',{token:G.token,op:'get'}),sv=j&&isObj(j.prof)?j.prof:{},sp=isObj(sv.p)?sv.p:{},sh=isObj(sv.hub)?sv.hub:{},sw=Array.isArray(sv.hw)?sv.hw:[],
+   lp=rd(k,{}),L=snap(),dirty=localStorage.getItem(k+'_dirty')==='1',first=!localStorage.getItem(k+'_sync');
+  if(!has(sv)){ /* nothing saved yet: this device's existing profile becomes the saved copy */
+   if(has(L)){sent=null;window.csGvPush()}else sent={k,j:JSON.stringify(L)};return}
+  let p,h,w; /* the server copy wins; edits not yet sent from this device win over it; a device that never synced keeps what only it has */
+  if(dirty){p=Object.assign({},sp,L.p);h=Object.assign({},sh,L.hub);w=Array.from(new Set(sw.concat(L.hw))).slice(-60)}
+  else if(first){p=Object.assign({},L.p,sp);h=Object.assign({},L.hub,sh);w=Array.from(new Set(L.hw.concat(sw))).slice(-60)}
+  else{p=sp;h=sh;w=sw}
+  const keep={};if(isObj(lp))for(const x of Object.keys(SK))if(lp[x]!==undefined)keep[x]=lp[x];
+  wr(k,Object.assign({},keep,p));wr(k+'_hub',h);wr(gvHwKey(),w);
+  try{localStorage.setItem(k+'_sync',String(j.updated||Date.now()))}catch(e){}
+  const M=snap(),mj=JSON.stringify(M);
+  if(dirty||(first&&has(L))){sent=null;window.csGvPush()}else sent={k,j:mj}};
+ const isObj=v=>!!v&&typeof v==='object'&&!Array.isArray(v)})();
 const gvImg=u=>/^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+\/=]+$/.test(u||'')?u:'';
 const gvAv=(u,n,c)=>u?`<img class="${c}" src="${esc(u)}" alt="${esc(n||'')}">`:`<div class="${c}">${esc(((n||'?').trim()[0]||'?').toUpperCase())}</div>`;
 const gvDOTS='<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="5" r="1.7" style="fill:currentColor"/><circle cx="12" cy="12" r="1.7" style="fill:currentColor"/><circle cx="12" cy="19" r="1.7" style="fill:currentColor"/></svg>';
@@ -1622,7 +1646,7 @@ const gvMenu0=(g)=>`<span class="csact gv-act"><button type="button" class="csib
 const gvStreak=a=>{const t=new Date();let n=0,k;for(let i=0;i<366;i++){const d=new Date(t.getFullYear(),t.getMonth(),t.getDate()-i),y=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'),e=a[y];if(!e){if(i===0)continue;if(i>0&&n===0&&i>14)break;continue}if(e.s==='P')n++;else if(i===0)continue;else break}return n};
 const gvHwKey=()=>'cs_hw_'+(G.sub||'')+'_'+((G.d&&G.d.stu&&G.d.stu.id)||'');
 const gvHwGet=()=>{try{return JSON.parse(localStorage.getItem(gvHwKey())||'[]')||[]}catch(e){return[]}};
-window.gvHw=i=>{try{const t=(((G.d||{}).rec||{}).task||[])[i];if(t==null)return;let a=gvHwGet();a=a.includes(t)?a.filter(x=>x!==t):a.concat(t);localStorage.setItem(gvHwKey(),JSON.stringify(a.slice(-60)))}catch(e){}render()};
+window.gvHw=i=>{try{const t=(((G.d||{}).rec||{}).task||[])[i];if(t==null)return;let a=gvHwGet();a=a.includes(t)?a.filter(x=>x!==t):a.concat(t);localStorage.setItem(gvHwKey(),JSON.stringify(a.slice(-60)));window.csGvPush&&window.csGvPush()}catch(e){}render()};
 const gvToday=g=>{const d=G.d||{},s=d.stu||{},att=d.att||{},tk=today(),e=att[tk],st=e?(e.s==='P'?'Present':'Absent'):'Not marked yet',stc=e?(e.s==='P'?'#34d399':'#fb7185'):'#aab1cf',n=gvStreak(att),h=new Date().getHours(),gr=h<12?'Good morning':h<17?'Good afternoon':'Good evening',nm=String(s.name||'').trim().split(/\s+/)[0],tasks=((d.rec||{}).task||[]).slice(0,4),done=gvHwGet(),f=d.fees||{},sum=(f.items||[]).reduce((a,x)=>a+(+x.a||0),0),due=(f.paid!=null&&sum>f.paid)?sum-f.paid:0,ms=(d.msgs||[]).filter(m=>m.f==='s'),lm=ms[ms.length-1];
  const tile=(b,l,c)=>'<div><b'+(c?' style="color:'+c+'"':'')+'>'+b+'</b><span>'+l+'</span></div>';
  const hw=!g&&tasks.length?'<div class="gvt-h"><h4>Homework and tasks</h4>'+tasks.map((t,i)=>'<button type="button" class="gvt-c'+(done.includes(t)?' dn':'')+'" onclick="gvHw('+i+')" aria-pressed="'+(done.includes(t)?'true':'false')+'"><i></i><span>'+esc(t)+'</span></button>').join('')+'</div>':'';
@@ -1633,7 +1657,7 @@ const gDash=()=>{const d=G.d,s=d.stu||{},g=G.who==='guardian',p=gvGet(),ph=gvImg
  return`<div class="gv">${hero}<div class="gv-stack">`+gvToday(g)+(g?noticeCard():'')+`<details class="gv-more"><summary>আরও · More</summary><div class="gv-grid">`+(g?sec('Attendance',heat())+camCard():'')+acadCard()+(g?teachCard()+feeCard()+msgCard():'')+`</div></details></div></div>`};
 const gvList=()=>{const d=G.d,M=d.msgs||[],l=M[M.length-1],q=(G.q||'').toLowerCase();if(q&&!(gvTN+' '+(d.inst||{}).name+' '+(l?l.x:'')).toLowerCase().includes(q))return'<div class="empty" style="background:#ffffff0d;border-color:#ffffff30">No contact matches your search.</div>';return`<button class="cr" onclick="gvChat()">${gvAvt('T',1,1)}<span class="f1"><b>${gvTN}</b><small>${l?esc(l.x):'Say hello to your child’s teacher'}</small></span><em>${l?esc(gvTime(l.at)):'Institution'}</em></button>`};
 const gvInbox=()=>{const d=G.d,p=gvGet(),me=(p.name||'You').trim();return`<div class="igp gvp"><div class="igt"><div class="gvt"><button type="button" class="gv-back" aria-label="Back to dashboard" onclick="gvMsgBack()">${gvBACK}</button><div><h2 class="ign">ClasSphera${gvCHV}</h2><small>${esc((d.inst||{}).name||'')}</small></div></div><span class="gv-ibt" role="button" tabindex="0" aria-label="Profile" onclick="gProfile()"><svg viewBox="0 0 24 24"><path d="M4 20h4L19 9a2.8 2.8 0 0 0-4-4L4 16z"/></svg></span></div><div class="igs">${gvSRCH}<input id="gvq" type="search" placeholder="Search people by name or ID" value="${esc(G.q||'')}" oninput="gvQ(this.value)"></div><div class="stories"><span class="st">${gvAvt(me,0,1)}<span>${esc(me.split(' ')[0])}</span></span><button type="button" class="st" onclick="gvChat()">${gvAvt('T',1,1)}<span>Teacher</span></button></div><div class="igm"><b>Messages</b><span>1 contacts</span></div><div id="gvl">${gvList()}</div></div>`};
-const gvRoom=()=>{const d=G.d,M=csMsgsN(d);let last='';const rows=M.map(m=>{const day=new Date(+m.at||0).toDateString(),sep=day!==last?`<div class="gv-day"><span>${esc(new Date(+m.at||0).toLocaleDateString([],{day:'numeric',month:'short',year:'numeric'}))}</span></div>`:'';last=day;return sep+`<div class="bub ${m.f==='s'?'':'me'}${m.nt?' csnt':''}" data-s="${esc(m.x)}">${m.nt?csNtHead(m):''}${esc(m.x)}<small>${esc(gvTime(m.at))}</small></div>`}).join('')||'<p class="mu text-sm m-auto">No messages yet. Say hello.</p>';
+const gvRoom=()=>{const d=G.d,M=csMsgsN(d);let last='';const rows=M.map(m=>{const day=new Date(+m.at||0).toDateString(),sep=day!==last?`<div class="gv-day"><span>${esc(new Date(+m.at||0).toLocaleDateString([],{day:'numeric',month:'short',year:'numeric'}))}</span></div>`:'';last=day;return sep+`<div class="bub ${m.f==='s'?'':'me'}${m.nt?' csnt':''}" data-s="${esc(m.x)}">${m.nt?csNtHead(m):''}${pzLk(m.x)}<small>${esc(gvTime(m.at))}</small></div>`}).join('')||'<p class="mu text-sm m-auto">No messages yet. Say hello.</p>';
  return`<div class="igr gvr"><div class="chd"><button type="button" class="btn ib mback" onclick="gvChatBack()" aria-label="Back to contacts">${gvBACK}</button><i class="cav">T</i><span><b>${gvTN}</b><small class="mu block">${esc((d.inst||{}).name||'')}</small></span><span class="csact gv-act"><button type="button" class="csib" aria-label="More options" aria-haspopup="true" onclick="gvDots(event)">${gvDOTS}</button><div class="csmenu" id="gvmenu"><button type="button" onclick="gvAct('search')">Search in chat</button><button type="button" onclick="gvAct('refresh')">Refresh messages</button><button type="button" onclick="gvAct('profile')">প্রোফাইল (Profile)</button></div></span></div><div class="csbar" id="gvbar" hidden><input id="gvsq" type="search" placeholder="Search in chat" oninput="gvFilter(this.value)"><small id="gvsn" class="mu"></small><button type="button" class="csib" aria-label="Close search" onclick="gvAct('search')">✕</button></div><div id="cb" class="cbody">${rows}</div><div class="cin cs9-cin"><div class="cs9-box"><div id="gvatt" class="gv-att" ${G.att?'':'hidden'}>${G.att?gvAttHtml():''}</div><input id="cm" type="text" maxlength="1000" placeholder="Write a message" autocomplete="off" onkeydown="if(event.key==='Enter')gvSend()"><div class="cs9-row"><label class="cs9-ic" aria-label="Attach file or image" title="Attach" style="cursor:pointer"><svg viewBox="0 0 24 24"><path d="M21 11l-8.5 8.5a5 5 0 0 1-7-7L14 4a3.3 3.3 0 0 1 5 5l-8.500 8.500a1.700 1.700 0 0 1-2.500-2.500L15 8"/></svg><input type="file" hidden accept="image/*,video/*,audio/*,application/pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.zip" onchange="gvAttach(this)"></label><span class="cs9-sp"></span><button type="button" id="gvmic" class="cs9-ic" onclick="gvVoice()" aria-label="Voice input" title="Voice input"><svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></button><button type="button" class="cs9-send" onclick="gvSend()" aria-label="Send" title="Send">${gvARROW}</button></div></div></div></div>`};
 V.guard=()=>{if(!(G.token&&G.d)){G.pg='';G.mc=0;document.body.classList.remove('gvchat');return gForm()}
  const m=G.pg==='msg'&&G.who==='guardian';document.body.classList.toggle('gvchat',m&&!!G.mc);
@@ -1680,7 +1704,7 @@ const sT=id=>w().students.find(a=>a.id===id),fp=s=>String(s||'').replace(/\D/g,'
 function snap(s){const x=w(),att={};Object.keys(x.att||{}).forEach(k=>{const v=x.att[k][s.id];if(v)att[k]={s:v==='Present'?'P':'A',t:'',n:''}});Object.keys(x.attx||{}).forEach(k=>{const e=x.attx[k][s.id];if(e)att[k]=e});
  const L=S.DK?S.L.filter(l=>l.t==='Income'&&String(l.c).startsWith('Fee · '+s.name)&&String(l.d).slice(0,7)===mon()):null,items=String(s.fitems||'').split(',').map(a=>a.split(':')).filter(a=>a[0].trim()&&+a[1]>0).map(a=>({n:a[0].trim(),a:+a[1]}));
  return{v:1,at:Date.now(),inst:{name:x.inst.name,type:x.inst.type,logo:okLogo(x.inst.logo),cctv:!!x.cctv},stu:{id:s.id,name:s.name,cls:s.cls,house:s.house||'',photo:s.photo||'',rel:s.rel||'Guardian'},att,marks:s.marks||{},rec:{lesson:x.routine||[],module:s.goal?[s.goal]:[],task:x.hw||[]},quran:s.quran||'',rate:s.rate||0,rem:(s.rem||[]).slice(0,20),
-  fees:{items,paid:L?L.reduce((a,l)=>a+l.a,0):null,cur:x.cur||'BDT',rc:L?L.map(l=>l.rc):[],hist:S.DK?S.L.filter(l=>l.t==='Income'&&String(l.c).startsWith('Fee · '+s.name)).slice(0,24).map(l=>({rc:l.rc,a:l.a,d:l.d})):[]},board:(x.board||[]).slice(0,20),exams:(Array.isArray(x.exams)?x.exams:[]).concat(((x.xm||{}).m_exam||[]).concat(x.m_exam||[]).map(e=>{const q=String(e.b||''),i=q.match(/\d{4}-\d{2}-\d{2}/),d=q.match(/(\d{1,2})[\/.](\d{1,2})[\/.](\d{4})/);return{t:e.a,d:i?i[0]:d?d[3]+'-'+('0'+d[2]).slice(-2)+'-'+('0'+d[1]).slice(-2):''}}).filter(e=>e.d)).slice(0,10).map(e=>({t:String(e.t||e.n||e.ti||e.title||'Exam').slice(0,40),d:String(e.d||e.date||'').slice(0,10)})),msgs:((x.gth||{})[s.id]||[]).slice(-60),cam:x.cctv&&s.camSeal?s.camSeal:''}}
+  fees:{items,paid:L?L.reduce((a,l)=>a+l.a,0):null,cur:x.cur||'BDT',chg:pzChg(s),rcp:pzRc(s),pm:pzPm(),rc:L?L.map(l=>l.rc):[],hist:S.DK?S.L.filter(l=>l.t==='Income'&&String(l.c).startsWith('Fee · '+s.name)).slice(0,24).map(l=>({rc:l.rc,a:l.a,d:l.d})):[]},board:(x.board||[]).slice(0,20),exams:(Array.isArray(x.exams)?x.exams:[]).concat(((x.xm||{}).m_exam||[]).concat(x.m_exam||[]).map(e=>{const q=String(e.b||''),i=q.match(/\d{4}-\d{2}-\d{2}/),d=q.match(/(\d{1,2})[\/.](\d{1,2})[\/.](\d{4})/);return{t:e.a,d:i?i[0]:d?d[3]+'-'+('0'+d[2]).slice(-2)+'-'+('0'+d[1]).slice(-2):''}}).filter(e=>e.d)).slice(0,10).map(e=>({t:String(e.t||e.n||e.ti||e.title||'Exam').slice(0,40),d:String(e.d||e.date||'').slice(0,10)})),msgs:((x.gth||{})[s.id]||[]).slice(-60),cam:x.cctv&&s.camSeal?s.camSeal:''}}
 const gAdm=()=>{const x=w(),T=x.students;return`<div class="glass p-5 mt-4"><h3 class="font-bold">Guardian &amp; student portal · publishing</h3><p class="text-xs mu mb-3">Set each student’s PINs, then publish. Guardians only ever receive their own child’s snapshot. PINs are stored only as salted hashes.</p>
 <label class="flex gap-2 items-center"><input type="checkbox" ${x.cctv?'checked':''} onchange="gaCam(this.checked)" style="width:auto"> Enable CCTV live view for guardians</label>
 <label>Notice or urgent broadcast</label><input id="gnt" maxlength="300"><label class="flex gap-2 items-center mt-2"><input id="gnu" type="checkbox" style="width:auto"> Urgent alarm</label><button class="btn mt-2" onclick="gaNote()">Post notice</button><div class="flex gap-2 mt-2 flex-wrap"><button class="btn" onclick="csShareNote('wa')">WhatsApp</button><button class="btn" onclick="csShareNote('sms')">SMS</button></div><p class="text-xs mu mt-1">If a guardian has blocked notifications, send urgent news by WhatsApp or SMS too.</p>
@@ -1868,17 +1892,9 @@ const gxFees=()=>{const d=G.d,s=d.stu||{},f=d.fees||{},p=gvGet(),ph=gvImg(p.sp)|
  ${items.length?`<div class="scroll"><table class="gxt"><tr><th>${gx('item')}</th><th>${gx('total')}</th><th>${gx('paid')}</th><th>${gx('due')}</th></tr>${rows}<tr class="gxtt"><td>${gx('total')}</td><td>${F(tot)}</td><td class="ok">${F(pd)}</td><td class="${due?'gxdu':''}">${F(due)}</td></tr></table></div>`:`<p class="text-sm mu">${gX('No fee schedule has been published yet.','এখনো কোনো ফি তালিকা প্রকাশ করা হয়নি।')}</p>`}
  <div class="gxsum"><div><small>${gx('total')}</small><b>${F(tot)}</b></div><div><small>${gx('paid')}</small><b class="ok">${F(pd)}</b></div><div><small>${gx('due')}</small><b class="${due?'gxdu':'ok'}">${F(due)}</b></div></div>
  ${sel!==base&&gxR(base)&&gxR(sel)?`<p class="text-xs mu mt-2">${gX('Indicative conversion only. Payments are settled in','আনুমানিক রূপান্তর মাত্র। পেমেন্ট নিষ্পন্ন হয়')} ${esc(base)}.</p>`:''}</section>
- ${due>0?`<section class="glass p-5"><h3 class="font-bold mb-3">${gx('pay')} · ${gx('paywith')}</h3><div class="gxm">${meth}</div></section>`:(items.length?`<section class="glass p-4 ok text-center"><b>${gx('cleared')}</b></section>`:'')}
- <section class="glass p-5"><h3 class="font-bold mb-3">${gx('rec')}</h3>${loc+srv||`<p class="text-sm mu">${gx('none')}</p>`}</section></div>`};
-window.gxPay=m=>{const f=G.d.fees||{},base=f.cur||'BDT',tot=(f.items||[]).reduce((a,b)=>a+(+b.a||0),0),due=Math.max(0,tot-(+f.paid||0)),st=m==='Stripe';modal(`<h3 class="text-lg font-bold">${gx('pay')} · ${esc(st?'Card · Stripe':m)}</h3><label>${gx('amount')} (${esc(base)})</label><input id="gxa" type="number" min="1" value="${due}">${st?'':`<label>${gx('num')} (${gX('your '+m+' number','আপনার '+m+' নম্বর')})</label><input id="gxn" inputmode="tel" maxlength="20" placeholder="01XXXXXXXXX"><label>${gx('txid')}</label><input id="gxt" maxlength="40">`}<button class="btn pri w-full mt-4" onclick="gxDo('${m}')">${gx('pay')}</button>`)};
-window.gxDo=async m=>{const d=G.d,f=d.fees||{},base=f.cur||'BDT',a=+$('#gxa').value,n=($('#gxn')||{}).value||'',t=($('#gxt')||{}).value||'',st=m==='Stripe';
- if(!(a>0))return toast(gX('Enter a valid amount','সঠিক পরিমাণ লিখুন'));if(!st){if(!/^\+?[\d\s\-().]{7,20}$/.test(n.trim()))return toast(gX('Enter a valid mobile number','সঠিক মোবাইল নম্বর দিন'));if(t.trim().length<4)return toast(gX('Enter the transaction ID','ট্রানজ্যাকশন আইডি দিন'))}
- if(bad(n+t))return;let url='',msg='';
- try{const j=await gp('/api/checkout',{gateway:m,item:`${d.stu.name} (${d.stu.id}) fees ${mon()}`,usd:a,cur:/^[A-Z]{3}$/.test(base)?base:'BDT',txid:t,sub:G.sub,institutionId:d.inst.name});url=j.url||'';msg=j.message||''}catch(e){msg=''}
- if(st){close();if(url)location.href=url;else toast(msg||gX('Card payment is not available right now','কার্ড পেমেন্ট এখন চালু নেই'));return}
- const p=gvGet();p.pay=[{m,n:n.trim(),t:t.trim(),a,c:base,d:new Date().toISOString()}].concat(p.pay||[]).slice(0,50);if(!gvSet(p))return;
- try{await gp('/api/g/send',{token:G.token,text:`[Payment] ${m} · ${base} ${a} · ${n.trim()} · TxID ${t.trim()}`.slice(0,1000)})}catch(e){}
- close();render();toast(msg||gX('Payment details submitted for verification','পেমেন্টের তথ্য যাচাইয়ের জন্য পাঠানো হয়েছে'))};
+ ${pzBlock(items.length)}
+ <section class="glass p-5"><h3 class="font-bold mb-3">${gx('rec')}</h3>${(pzRecRows()+loc+srv)||`<p class="text-sm mu">${gx('none')}</p>`}</section></div>`};
+window.gxPay=()=>{window.pzOpen&&pzOpen('FI@'+mon())};window.gxDo=window.gxPay; /* fee money no longer goes through /api/checkout (platform billing); the secure institution flow handles it */
 /* live messages: polling + notifications */
 window.gxAsk=()=>{try{window.csPnCard&&csPnCard(true)}catch(e){}};
 const gxKeep=f=>{const i=$('#cm'),v=i?i.value:'',fc=i&&document.activeElement===i;f();const n=$('#cm');if(n&&v){n.value=v;if(fc)n.focus()}};
@@ -1919,7 +1935,7 @@ const gxList=k=>{const r=gd().rec||{};return k==='hw'?(r.task||[]):[].concat(r.l
 const gxTicks=k=>{const a=gxList(k),dn=gk()[k]||{},c=a.filter(x=>dn[x]).length;return a.length?`<div class="mb-3"><small class="mu">${c}/${a.length} ${gl('completed','সম্পন্ন')}</small>${gxBarH(c/a.length*100)}</div>`+a.map((x,i)=>`<label class="gxtk"><input type="checkbox" ${dn[x]?'checked':''} onchange="gxTick('${k}',${i})"><span>${esc(x)}</span></label>`).join(''):''};
 window.gxTick=(k,i)=>{const x=gxList(k)[i];if(x==null)return;const p=gk(),m=p[k]||{};m[x]=!m[x];p[k]=m;gvSet(p);render()};
 const gxFee=()=>{const f=gd().fees||{},items=f.items||[],tot=items.reduce((a,b)=>a+(+b.a||0),0),pd=Math.min(tot,Math.max(0,+f.paid||0));return{f,base:f.cur||'BDT',items,tot,pd,due:Math.max(0,tot-pd)}};
-const gxPays=()=>{const F=gxFee(),p=gk();return[...(p.pay||[]).map(r=>({d:r.d,a:r.a,c:r.c,ref:r.m,m:r.m,n:r.n,t:r.t,loc:1})),...(F.f.hist||[]).map(r=>({d:r.d,a:+r.a||0,c:F.base,ref:r.rc,m:'',n:'',t:''}))].sort((x,y)=>String(y.d)>String(x.d)?1:-1)};
+const gxPays=()=>{pzClean();const F=gxFee(),p=gk(),RC=pzRcpts();return[...RC.map(r=>({d:new Date(r.at||0).toISOString(),a:+r.a||0,c:r.u||F.base,ref:r.n,m:r.m,n:r.f,t:r.t,rc:r})),...(p.pay||[]).map(r=>({d:r.d,a:r.a,c:r.c,ref:r.m,m:r.m,n:r.n,t:r.t,loc:1})),...(F.f.hist||[]).filter(r=>!RC.some(q=>q.n===r.rc)).map(r=>({d:r.d,a:+r.a||0,c:F.base,ref:r.rc,m:'',n:'',t:''}))].sort((x,y)=>String(y.d)>String(x.d)?1:-1)};
 /* forms that message the institution */
 const GXL={s:['Topic','বিষয়'],t:['Details','বিস্তারিত'],w:['Meet with','কার সাথে'],d:['Preferred date','পছন্দের তারিখ'],h:['Time','সময়']},GXO=['09:00','10:00','11:00','12:00','14:00','15:00','16:00'];
 const GXF={adm:{k:'adm',g:'Admin desk',f:[['s',['Admission & records','Certificates','Transport','Hostel','Other']],['t']]},apt:{k:'apt',g:'Appointment',f:[['w',['Class teacher','Head of institution','Accounts office']],['d'],['h',GXO],['t']]},grv:{k:'grv',g:'Feedback',f:[['s',['Suggestion','Complaint','Appreciation']],['t']]},ptm:{k:'ptm',g:'PTM request',f:[['d'],['h',GXO],['t']]},sch:{k:'sch',g:'Scholarship request',f:[['s',['Merit scholarship','Need-based waiver','Sibling discount','Other']],['t']]}};
@@ -1936,7 +1952,7 @@ window.gxSos=()=>modal(`<h3 class="text-lg font-bold">${gl('Send emergency alert
 window.gxSos2=async()=>{const n=(($('#gxso')||{}).value||'').trim();if(bad(n))return;const s=gd().stu;try{await gp('/api/g/send',{token:G.token,text:`[SOS] URGENT · ${s.name} (${s.id}) · ${n||'Guardian needs immediate help'}`.slice(0,1000)})}catch(e){return toast((e.message||'Could not send')+' — '+gl('call the institution directly','সরাসরি প্রতিষ্ঠানে ফোন করুন'))}
  const p=gk();p.sos=[{d:new Date().toISOString(),v:n||'—'}].concat(p.sos||[]).slice(0,20);gvSet(p);close();render();toast(gl('Emergency alert sent','জরুরি অ্যালার্ট পাঠানো হয়েছে'))};
 /* receipts / invoice */
-window.gxRc=i=>{const r=gxPays()[i],d=gd(),s=d.stu||{};if(!r)return;modal(`<div class="text-center"><div class="hd font-extrabold text-xl">${esc((d.inst||{}).name||'')}</div><div class="text-xs mu">${gl('Money receipt','অর্থ রসিদ')} · ${esc(r.ref||'')}</div><div class="glass p-3 my-3 text-sm text-left">${esc(s.name)} · ${esc(s.id)}<br>${gl('Amount','পরিমাণ')}: <b>${esc(gxFmt(r.a,r.c,r.c))}</b><br>${gl('Date','তারিখ')}: ${esc(new Date(r.d).toLocaleDateString())}${r.m?`<br>${gl('Method','মাধ্যম')}: ${esc(r.m)}`:''}${r.n?`<br>${gx('num')}: ${esc(r.n)}`:''}${r.t?`<br>${gx('txid')}: ${esc(r.t)}`:''}${r.loc?`<br><i>${gl('Submitted — awaiting institution confirmation','জমা দেওয়া হয়েছে — প্রতিষ্ঠানের নিশ্চিতকরণের অপেক্ষায়')}</i>`:''}</div><button class="btn pri w-full" onclick="gPrint()">${gl('Save as PDF / Print','PDF সংরক্ষণ / প্রিন্ট')}</button></div>`)};
+window.gxRc=i=>{const r=gxPays()[i],d=gd(),s=d.stu||{};if(!r)return;if(r.rc)return pzRcModal(r.rc);modal(`<div class="text-center"><div class="hd font-extrabold text-xl">${esc((d.inst||{}).name||'')}</div><div class="text-xs mu">${gl('Money receipt','অর্থ রসিদ')} · ${esc(r.ref||'')}</div><div class="glass p-3 my-3 text-sm text-left">${esc(s.name)} · ${esc(s.id)}<br>${gl('Amount','পরিমাণ')}: <b>${esc(gxFmt(r.a,r.c,r.c))}</b><br>${gl('Date','তারিখ')}: ${esc(new Date(r.d).toLocaleDateString())}${r.m?`<br>${gl('Method','মাধ্যম')}: ${esc(r.m)}`:''}${r.n?`<br>${gx('num')}: ${esc(r.n)}`:''}${r.t?`<br>${gx('txid')}: ${esc(r.t)}`:''}${r.loc?`<br><i>${gl('Submitted — awaiting institution confirmation','জমা দেওয়া হয়েছে — প্রতিষ্ঠানের নিশ্চিতকরণের অপেক্ষায়')}</i>`:''}</div><button class="btn pri w-full" onclick="gPrint()">${gl('Save as PDF / Print','PDF সংরক্ষণ / প্রিন্ট')}</button></div>`)};
 window.gxInv=()=>{const d=gd(),s=d.stu||{},F=gxFee(),m=a=>esc(gxFmt(a,F.base,F.base));modal(`<div class="text-center"><div class="hd font-extrabold text-xl">${esc((d.inst||{}).name||'')}</div><div class="text-xs mu">${gl('Fee invoice','ফি ইনভয়েস')} · ${esc(new Date().toLocaleDateString())}</div><div class="glass p-3 my-3 text-sm text-left">${esc(s.name)} · ${esc(s.id)}<br>${F.items.map(i=>esc(i.n)+': '+m(+i.a||0)).join('<br>')}<br><b>${gx('total')}: ${m(F.tot)}</b><br>${gx('paid')}: ${m(F.pd)}<br><b>${gx('due')}: ${m(F.due)}</b></div><button class="btn pri w-full" onclick="gPrint()">${gl('Save as PDF / Print','PDF সংরক্ষণ / প্রিন্ট')}</button></div>`)};
 /* document vault (stored on this device only) */
 const gxDK=()=>gvKey()+'_docs',gxDocs=()=>{try{return JSON.parse(localStorage.getItem(gxDK())||'[]')}catch(e){return[]}};
@@ -1971,7 +1987,7 @@ sos:()=>{const h=gk().sos||[];return box(`<p class="text-sm mu mb-4">${gl('Use o
 ledger:()=>{const F=gxFee(),m=a=>esc(gxFmt(a,F.base,F.base)),P=gxPays();return box(`<div class="gxsum"><div><small>${gx('total')}</small><b>${m(F.tot)}</b></div><div><small>${gx('paid')}</small><b class="ok">${m(F.pd)}</b></div><div><small>${gx('due')}</small><b class="${F.due?'gxdu':'ok'}">${m(F.due)}</b></div></div>`)+box(P.length?P.map(r=>`<div class="gxr"><div><b>${esc(r.m||r.ref||'')}</b><small>${esc(new Date(r.d).toLocaleDateString())}${r.n?' · '+esc(r.n):''}${r.t?' · '+esc(r.t):''}${r.loc?' · '+gl('awaiting confirmation','নিশ্চিতকরণের অপেক্ষায়'):''}</small></div><span class="ok">${esc(gxFmt(r.a,r.c,r.c))}</span></div>`).join(''):gxEmpty(gx('none')))},
 receipt:()=>{const P=gxPays();return box(`<button type="button" class="btn pri mb-3" onclick="gxInv()">${gl('Fee invoice','ফি ইনভয়েস')}</button>${P.length?P.map((r,i)=>`<div class="gxr"><div><b>${esc(r.ref||'')}</b><small>${esc(new Date(r.d).toLocaleDateString())}</small></div><span>${esc(gxFmt(r.a,r.c,r.c))} <button type="button" class="btn" onclick="gxRc(${i})">${gl('Receipt','রসিদ')}</button></span></div>`).join(''):gxEmpty(gx('none'))}`)},
 schol:()=>{const a=gd().schol||(gd().fees||{}).waive||[],F=gxFee();return box(a.length?a.map(x=>`<div class="gxr"><div><b>${esc(x.n||'')}</b><small>${esc(x.t||'')}</small></div><span class="ok">${esc(gxFmt(+x.a||0,F.base,F.base))}</span></div>`).join(''):gxEmpty(gl('No scholarship or waiver is recorded for this student.','এই শিক্ষার্থীর জন্য কোনো স্কলারশিপ বা ওয়েভার নেই।')))+box(`<h3 class="font-bold mb-2">${gl('Request a scholarship or waiver','স্কলারশিপ বা ওয়েভারের আবেদন')}</h3>${gxFrm('sch')}${gxHist('sch')}`)},
-vault:()=>{const a=gxDocs();return box(`<label class="btn pri" for="gxdf">${gl('Upload document','ডকুমেন্ট আপলোড')}</label><input id="gxdf" type="file" accept="image/*,application/pdf" hidden onchange="gxDoc(this)"><p class="text-xs mu mt-2 mb-3">${gl('Images or PDF, up to 1.2 MB each. Stored only on this device and visible only after you sign in with your PIN.','ছবি বা PDF, প্রতিটি সর্বোচ্চ ১.২ এমবি। শুধু এই ডিভাইসে সংরক্ষিত এবং PIN দিয়ে সাইন ইন করলেই দেখা যায়।')}</p>${a.length?a.map((x,i)=>`<div class="gxr"><div><b>${esc(x.n)}</b><small>${esc(Math.round(x.s/1024))} KB · ${esc(new Date(x.d).toLocaleDateString())}</small></div><span><button type="button" class="btn" onclick="gxDocOpen(${i})">${gl('Open','খুলুন')}</button> <button type="button" class="btn" onclick="gxDocDel(${i})">✕</button></span></div>`).join(''):gxEmpty(gl('No documents saved yet.','এখনো কোনো ডকুমেন্ট নেই।'))}`)},
+vault:()=>{const a=gxDocs();return pzVault()+box(`<label class="btn pri" for="gxdf">${gl('Upload document','ডকুমেন্ট আপলোড')}</label><input id="gxdf" type="file" accept="image/*,application/pdf" hidden onchange="gxDoc(this)"><p class="text-xs mu mt-2 mb-3">${gl('Images or PDF, up to 1.2 MB each. Stored only on this device and visible only after you sign in with your PIN.','ছবি বা PDF, প্রতিটি সর্বোচ্চ ১.২ এমবি। শুধু এই ডিভাইসে সংরক্ষিত এবং PIN দিয়ে সাইন ইন করলেই দেখা যায়।')}</p>${a.length?a.map((x,i)=>`<div class="gxr"><div><b>${esc(x.n)}</b><small>${esc(Math.round(x.s/1024))} KB · ${esc(new Date(x.d).toLocaleDateString())}</small></div><span><button type="button" class="btn" onclick="gxDocOpen(${i})">${gl('Open','খুলুন')}</button> <button type="button" class="btn" onclick="gxDocDel(${i})">✕</button></span></div>`).join(''):gxEmpty(gl('No documents saved yet.','এখনো কোনো ডকুমেন্ট নেই।'))}`)},
 inst:()=>{const F=gxFee(),p=gk().plan,m=a=>esc(gxFmt(a,F.base,F.base));let h='';
  if(p){const td=today();h=box(`<table class="gxt"><tr><th>#</th><th>${gl('Due date','নির্ধারিত তারিখ')}</th><th>${gx('amount')}</th><th>${gl('Paid','পরিশোধ')}</th></tr>${p.s.map((x,i)=>{const dn=p.done.includes(i),late=!dn&&x.d<td,dy=Math.round((new Date(x.d+'T00:00:00')-new Date(td+'T00:00:00'))/864e5);return`<tr><td>${i+1}</td><td>${esc(x.d)}${!dn?`<small class="block ${late?'gxdu':'mu'}">${late?gl('Overdue','মেয়াদোত্তীর্ণ'):dy<=3?gl(`Due in ${dy} day(s)`,`${dy} দিনের মধ্যে`):''}</small>`:''}</td><td>${m(x.a)}</td><td><input type="checkbox" ${dn?'checked':''} aria-label="Paid" onchange="gxPlanTick(${i})" style="width:auto"></td></tr>`}).join('')}</table><p class="text-xs mu mt-3">${p.ad?gl('Auto-debit was requested. It starts only after your institution and payment provider approve it.','অটো-ডেবিটের অনুরোধ পাঠানো হয়েছে। প্রতিষ্ঠান ও পেমেন্ট প্রদানকারী অনুমোদন দিলেই এটি শুরু হবে।'):gl('Tick each installment after you pay it.','প্রতিটি কিস্তি পরিশোধের পর টিক দিন।')}</p><button type="button" class="btn mt-3" onclick="gxPlanDel()">${gl('Reset plan','প্ল্যান মুছুন')}</button>`)}
  return(F.due>0?box(`<p class="text-sm mb-3">${gx('due')}: <b>${m(F.due)}</b></p><div class="gxfm"><label for="gxin">${gl('Installments','কিস্তির সংখ্যা')}</label><select id="gxin">${[2,3,4,5,6,8,10,12].map(n=>`<option>${n}</option>`).join('')}</select><label for="gxis">${gl('First due date','প্রথম কিস্তির তারিখ')}</label><input id="gxis" type="date" min="${today()}"><label class="gv-chk"><input id="gxia" type="checkbox"><span>${gl('Request auto-debit','অটো-ডেবিটের অনুরোধ করুন')}</span></label><button type="button" class="btn pri" onclick="gxPlan()">${gl('Save plan','প্ল্যান সংরক্ষণ')}</button></div>`):box(gxEmpty(gl('Nothing is due right now.','এখন কোনো বকেয়া নেই।'))))+h}};
@@ -1992,7 +2008,7 @@ const gsTi=k=>{for(const c of GSC)for(const s of c[7])if(s[0]===k)return gl(s[2]
 const gsCats=()=>GSC.map(c=>{const on=c[7].some(s=>G.pg==='s:'+s[0]);return`<div class="gxcat gscat ${on?'open':''}" data-c="${c[0]}" style="--c:${c[1]};--t:${c[1]}29"><button type="button" class="gxi" aria-expanded="${on}" onclick="gxTog('${c[0]}')"><span class="gsic">${c[2]}</span><span class="gst"><b>${esc(gl(c[3],c[4]))}</b><small>${esc(gl(c[5],c[6]))}</small></span><b class="gxch">›</b></button><div class="gxsubs">${c[7].map(s=>`<button type="button" class="gxi sub ${G.pg==='s:'+s[0]?'on':''}" onclick="gsGo('${s[0]}')"><span class="gse">${s[1]}</span><span>${esc(gl(s[2],s[3]))}</span></button>`).join('')}</div></div>`}).join('');
 const gxOs=window.gxOpen;window.gxOpen=()=>{gxOs();if(G.who!=='student')return;const n=document.querySelector('#gxd nav .gxs');if(n)n.insertAdjacentHTML('beforebegin',`<div class="gsdiv">${gl('Explore','অন্বেষণ')}</div>`+gsCats())};
 /* storage (this device only, per student) */
-const GSD=()=>{try{return JSON.parse(localStorage.getItem(gvKey()+'_hub')||'{}')||{}}catch(e){return{}}},GSW=o=>{try{localStorage.setItem(gvKey()+'_hub',JSON.stringify(o));return 1}catch(e){toast(gl('Storage is full on this device','এই ডিভাইসের স্টোরেজ পূর্ণ'));return 0}},gsU=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,6),gsCl=(x,n)=>{x=String(x);n=n||160;return x.length>n?x.slice(0,n)+'…':x};
+const GSD=()=>{try{return JSON.parse(localStorage.getItem(gvKey()+'_hub')||'{}')||{}}catch(e){return{}}},GSW=o=>{try{localStorage.setItem(gvKey()+'_hub',JSON.stringify(o));window.csGvPush&&window.csGvPush();return 1}catch(e){toast(gl('Storage is full on this device','এই ডিভাইসের স্টোরেজ পূর্ণ'));return 0}},gsU=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,6),gsCl=(x,n)=>{x=String(x);n=n||160;return x.length>n?x.slice(0,n)+'…':x};
 const S3=(...p)=>`<div class="gxsum">${p.map(([l,v,c])=>`<div><small>${l}</small><b class="${c||''}">${v}</b></div>`).join('')}</div>`,avg=(a,k)=>a.length?(a.reduce((s,x)=>s+(+x.v[k]||0),0)/a.length).toFixed(1):'–',ago7=()=>new Date(Date.now()-6*864e5).toISOString().slice(0,10);
 const gsStreak=a=>{const s=new Set(a.map(x=>x.v.dt));let d=new Date(today()+'T00:00:00Z'),n=0;if(!s.has(d.toISOString().slice(0,10)))d.setUTCDate(d.getUTCDate()-1);while(s.has(d.toISOString().slice(0,10))){n++;d.setUTCDate(d.getUTCDate()-1)}return n};
 const GST=['09:00','10:00','11:00','12:00','14:00','15:00','16:00'],T_=(e,b)=>[e,b];
@@ -2082,6 +2098,181 @@ club:()=>box(`<h3 class="font-bold mb-3">${gl('Join your clubs','আপনার
 window.gsGo=k=>{if(G.who!=='student'||!GSP[k])return;gxClose();if(gsTm){clearInterval(gsTm);gsTm=0}if(gsRc){try{gsRc.stop()}catch(e){}}G.pg='s:'+k;G.mc=0;G.q='';scrollTo(0,0);render()};
 const gsPage=k=>{const s=gd().stu||{};let b;try{b=GSP[k]()}catch(e){b=box(gxEmpty(gl('This page could not load. Please go back and try again.','পেজটি লোড হয়নি। ফিরে গিয়ে আবার চেষ্টা করুন।')))}return`<div class="gxf gxstu"><div class="gxph"><button type="button" class="btn ib" onclick="gxGo('home')" aria-label="Back">${gvBACK}</button><div><h2>${esc(gsTi(k))}</h2><small>${esc(s.name||'')} · ${esc(gx('id'))} ${esc(s.id||'')}</small></div></div>${b}</div>`};
 const vg2=V.guard;V.guard=function(){if(G.token&&G.d&&G.who==='student'&&/^s:/.test(G.pg||'')&&GSP[G.pg.slice(2)]){document.body.classList.add('gvx');document.body.classList.remove('gvchat');return gxBar()+gsPage(G.pg.slice(2))}return vg2.apply(this,arguments)};
+/* ===== Fee Payment, Approvals & Digital Receipts (Guardian / Student fee module only) ===== */
+{const st=document.createElement('style');st.id='pz-css';st.textContent=`
+.pzw{display:grid;gap:14px;margin-top:14px}
+.pzc{border-radius:22px;padding:18px;background:linear-gradient(145deg,rgba(251,191,36,.13),rgba(255,255,255,.05));border:1px solid rgba(251,191,36,.35);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px)}
+.pzh{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px}
+.pzh small{opacity:.7}
+.pzb{font-size:.7rem;font-weight:800;padding:3px 10px;border-radius:999px;background:#fbbf2433;color:#fbbf24}
+.pzb.dr{background:#818cf833;color:#a5b4fc}.pzb.pe{background:#22d3ee26;color:#67e8f9}.pzb.rj{background:#f8717126;color:#fca5a5}
+.pzc h3{font-weight:800;font-size:1.05rem}.pzk{font-size:.82rem;opacity:.78}.pza{font-size:1.9rem;font-weight:800;margin:8px 0 12px}
+.pzp{display:block;width:100%;padding:13px 16px;border:0;border-radius:14px;color:#fff;font-weight:800;font-size:.95rem;background:linear-gradient(135deg,#0a1a4f,#1e3a8a);box-shadow:0 8px 22px #1e3a8a66;cursor:pointer}
+.pzp:disabled{opacity:.5;cursor:not-allowed}
+.pzn{font-size:.8rem;margin-top:8px;opacity:.85}.pzn.bad{color:#fca5a5}
+.pzm{border-radius:22px;padding:4px;background:linear-gradient(160deg,rgba(255,255,255,.1),rgba(255,255,255,.03));backdrop-filter:blur(22px);-webkit-backdrop-filter:blur(22px)}
+.pzm h3{font-weight:800;font-size:1.15rem}.pzm p.sub{font-size:.8rem;opacity:.75}.pzamt{font-size:1.7rem;font-weight:800;margin:6px 0 10px}
+.pzseg{display:grid;grid-template-columns:1fr 1fr;gap:6px;padding:4px;border-radius:14px;background:rgba(255,255,255,.07);margin-bottom:10px}
+.pzseg button{padding:9px;border-radius:11px;font-weight:700;font-size:.82rem;border:0;background:transparent;color:inherit;cursor:pointer}
+.pzseg button.on{background:linear-gradient(135deg,#0a1a4f,#1e3a8a);color:#fff}
+.pzg{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px}
+.pzmb{padding:11px;border-radius:13px;font-weight:700;border:1px solid rgba(255,255,255,.18);background:rgba(255,255,255,.06);color:inherit;cursor:pointer}
+.pzmb.on{border-color:#38bdf8;background:rgba(56,189,248,.16)}
+.pzin{border-radius:14px;padding:12px;background:rgba(56,189,248,.1);border:1px dashed rgba(56,189,248,.5);font-size:.84rem;margin-bottom:10px}
+.pzin b.no{font-size:1.15rem;letter-spacing:.04em;display:inline-block;margin:4px 0}
+.pzfn{font-size:.72rem;opacity:.65;margin-top:10px;text-align:center}
+.pzvf{display:inline-block;margin:8px 0;padding:4px 12px;border-radius:999px;font-weight:800;font-size:.8rem;background:#34d39922;color:#34d399}.pzvf.bad{background:#f8717122;color:#f87171}
+.pzlk{display:inline-block;margin:4px 0;padding:6px 12px;border-radius:12px;background:#0a1a4f;color:#fff!important;font-weight:700;text-decoration:none}
+.pzq{border:1px solid rgba(255,255,255,.12);border-radius:14px;padding:12px;margin-top:10px;font-size:.85rem}
+.pzq .r{display:flex;gap:8px;margin-top:8px;flex-wrap:wrap}
+.pzrr{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid rgba(255,255,255,.1);font-size:.85rem}
+`;document.head.appendChild(st)}
+const pzPayL=()=>({en:'Pay Now',bn:'পরিশোধ করুন',ar:'ادفع الآن',es:'Pagar ahora',fr:'Payer',hi:'भुगतान करें',ur:'ادائیگی کریں',id:'Bayar sekarang',tr:'Şimdi öde',ru:'Оплатить',pt:'Pagar agora',zh:'立即缴费',de:'Jetzt zahlen'}[LNG]||'Pay Now'),
+ pzSubL=()=>({en:'Submit',bn:'সাবমিট',ar:'إرسال',es:'Enviar',fr:'Envoyer',hi:'सबमिट',ur:'جمع کریں',id:'Kirim',tr:'Gönder',ru:'Отправить',pt:'Enviar',zh:'提交',de:'Absenden'}[LNG]||'Submit');
+const pzCat={m:['Monthly Fee','মাসিক ফি'],e:['Exam Fee','পরীক্ষার ফি'],c:['Custom Charge','অন্যান্য চার্জ']};
+const pzB=s=>btoa(unescape(encodeURIComponent(s))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,''),
+ pzU=s=>decodeURIComponent(escape(atob(s.replace(/-/g,'+').replace(/_/g,'/'))));
+const pzLink=async(r,ref)=>{const b={...r};delete b.g;const j=JSON.stringify(b),B=location.origin+location.pathname+'#rcpt='+pzB(j)+'.';
+ if(/^[0-9a-f]{32}$/.test(r.g||''))return B+r.g;
+ try{const k=await gp('/api/receipt/sign',{sub:S.user.sub,id:w().id,key:nk(),j,t:String(r.t||''),n:String(r.n||''),ref:String(ref||'')});if(k&&/^[0-9a-f]{32}$/.test(k.sig||'')){r.g=k.sig;return B+k.sig}}catch(e){if(/duplicate_trxid/.test(String(e&&e.message)))throw new Error('This TrxID was already used for another receipt. Nothing was changed.')}
+ return B+(await sha(j)).slice(0,16)},
+ pzDec=h=>{const m=/^#?rcpt=([\w-]+)\.([0-9a-f]{16}|[0-9a-f]{32})$/.exec(String(h||''));if(!m)return null;try{const j=pzU(m[1]);return{r:JSON.parse(j),j,d:m[2]}}catch(e){return null}};
+const pzConv=(a,b,c)=>{const rb=gxR(b),rc=gxR(c);return rb&&rc?Math.round(a/rb*rc*100)/100:a};
+/* ---------- receipts (institution-issued) ---------- */
+const pzRcpts=()=>{const d=gd()||{},out=[],seen={};((d.fees||{}).rcp||[]).forEach(r=>{if(r&&r.n&&!seen[r.n]){seen[r.n]=1;out.push(r)}});
+ (d.msgs||[]).forEach(m=>{if(m.f!=='s')return;const k=/https?:\/\/\S*#(rcpt=[\w.\-]+)/.exec(String(m.x||''));if(!k)return;const q=pzDec(k[1]);if(q&&q.r&&q.r.n&&!seen[q.r.n]&&q.r.d===(d.stu||{}).id){seen[q.r.n]=1;out.push(q.d.length===32?Object.assign(q.r,{g:q.d}):q.r)}});
+ return out.sort((a,b)=>(b.at||0)-(a.at||0))};
+const pzRcHtml=(r,o)=>{o=o||{};const R=(l,v)=>v?`<div class="flex justify-between gap-3 py-1 border-b border-white/10"><span class="mu">${l}</span><b style="text-align:right;word-break:break-all">${esc(v)}</b></div>`:'';
+ return`<div class="text-center"><div class="hd font-extrabold text-xl">${esc(r.i||'')}</div><div class="text-xs mu">${gl('Digital Money Receipt','ডিজিটাল মানি রসিদ')} · ${esc(r.n||'')}</div>${o.v==null?'':o.v==='na'?`<div class="pzvf bad">${gl('⚠ Not verified: no valid server signature (or the server could not be reached)','⚠ যাচাই হয়নি: বৈধ সার্ভার স্বাক্ষর নেই (বা সার্ভারে পৌঁছানো যায়নি)')}</div>`:`<div class="pzvf ${o.v?'':'bad'}">${o.v?gl('✔ Verified: receipt data is intact','✔ যাচাইকৃত: রসিদের তথ্য অক্ষত'):gl('✖ Verification failed: data was altered','✖ যাচাই ব্যর্থ: তথ্য পরিবর্তিত')}</div>`}<div class="glass p-3 my-3 text-sm text-left">${R(gl('Institution','প্রতিষ্ঠান'),r.i)}${R(gl('Student','শিক্ষার্থী'),r.s)}${R(gl('Student ID','শিক্ষার্থী আইডি'),r.d)}${R(gl('Fee subject','ফি-এর খাত'),r.k)}${R(gl('Amount paid','পরিশোধিত পরিমাণ'),(r.u||'')+' '+(+r.a||0).toLocaleString())}${r.b!=null?R(gl('Balance due after payment','পরিশোধের পর বাকি'),(r.u||'')+' '+(+r.b||0).toLocaleString()):''}${R(gl('Payment method','পেমেন্ট মাধ্যম'),r.m)}${R(gl('Sender number','প্রেরকের নম্বর'),r.f)}${R(gl('Receiver number','প্রাপকের নম্বর'),r.r)}${R('TrxID',r.t)}${R(gl('Timestamp','সময়'),new Date(r.at||0).toLocaleString())}</div>${o.l?`<p class="text-xs mu break-all">${gl('Verification link','যাচাই লিংক')}:<br><a href="${esc(o.l)}" onclick="return pzOpenLink(this.href)">${esc(o.l)}</a></p>`:''}<button class="btn pri w-full mt-3" onclick="gPrint()">${gl('Save as PDF / Print','PDF সংরক্ষণ / প্রিন্ট')}</button></div>`};
+window.pzRcModal=async r=>{let l='';try{l=await pzLink(r)}catch(e){}modal(pzRcHtml(r,{l}))};
+window.pzView=n=>{const r=pzRcpts().find(q=>q.n===n);if(r)pzRcModal(r)};
+window.pzVerify=async h=>{const q=pzDec(h);if(!q||!q.r)return modal(`<h3 class="text-lg font-bold">${gl('Receipt not valid','রসিদটি বৈধ নয়')}</h3><p class="text-sm mu mt-2">${gl('This verification link is incomplete or damaged.','এই যাচাই লিংকটি অসম্পূর্ণ বা নষ্ট।')}</p>`);
+ let ok='na';if(q.d.length===32){try{const k=await gp('/api/receipt/verify',{j:q.j,sig:q.d});ok=k&&k.ok===true?true:(k&&k.ok===false?false:'na')}catch(e){ok='na'}}modal(pzRcHtml(q.r,{v:ok,l:location.origin+location.pathname+'#'+String(h).replace(/^#/,'')}))};
+window.pzOpenLink=u=>{const i=String(u).indexOf('#rcpt=');if(i<0)return true;pzVerify(String(u).slice(i));return false};
+window.pzLk=t=>esc(t).replace(/https?:\/\/[^\s<]*#rcpt=[\w.\-]+/g,u=>`<a class="pzlk" href="${u}" onclick="return pzOpenLink(this.href)">🧾 ${gl('View verified receipt','যাচাইকৃত রসিদ দেখুন')}</a>`);
+addEventListener('hashchange',()=>{if(/^#rcpt=/.test(location.hash))pzVerify(location.hash)});
+if(/^#rcpt=/.test(location.hash))setTimeout(()=>pzVerify(location.hash),3200);
+window.pzVault=()=>{const R=pzRcpts();return R.length?box(`<h3 class="font-bold mb-2">${gl('Institution-issued receipts','প্রতিষ্ঠান প্রদত্ত রসিদ')}</h3>${R.map(r=>`<div class="pzrr"><div><b>${esc(r.n)}</b><small class="block mu">${esc(r.k||'')} · ${esc((r.u||'')+' '+(+r.a||0))} · ${esc(new Date(r.at||0).toLocaleDateString())}</small></div><button type="button" class="btn" onclick="pzView('${esc(r.n)}')">${gl('Open','খুলুন')}</button></div>`).join('')}`):''};
+window.pzRecRows=()=>pzRcpts().map(r=>`<div class="gxr"><div><b>${esc(r.n)}</b><small>${esc(r.k||'')} · ${esc(r.m||'')} · ${esc(new Date(r.at||0).toLocaleString())}</small></div><span class="ok">${esc(gxFmt(+r.a||0,r.u||'BDT',r.u||'BDT'))} <button type="button" class="btn" onclick="pzView('${esc(r.n)}')">${gl('Receipt','রসিদ')}</button></span></div>`).join('');
+/* ---------- due cards ---------- */
+const pzSt=id=>(gk().pq||{})[id]||null,pzPut=(id,o)=>{const p=gk();p.pq=p.pq||{};if(o)p.pq[id]=o;else delete p.pq[id];gvSet(p);pzPush()};
+/* cloud-synced drafts: small debounced copy of draft/pending state in D1 (/api/g/draft); localStorage stays as the local backup */
+const pzCl={t:0,at:0,busy:0,ok:0},
+ pzSan=v=>v&&typeof v==='object'&&(v.st==='draft'||v.st==='pending')?{st:v.st,sc:v.sc==='G'?'G':'L',m:String(v.m||'').slice(0,20),n:String(v.n||'').slice(0,60),t:String(v.t||'').slice(0,40),a:Math.max(0,+v.a||0),cur:/^[A-Z]{3}$/.test(v.cur||'')?v.cur:'BDT',sub:/^P[0-9A-F]{8}$/.test(v.sub||'')?v.sub:undefined,at:+v.at||0}:null,
+ pzPush=()=>{clearTimeout(pzCl.t);pzCl.t=setTimeout(async()=>{try{if(!G.token||!G.d||!pzCl.ok)return;const q=gk().pq||{},o={};Object.keys(q).slice(0,20).forEach(id=>{const v=pzSan(q[id]);if(v)o[id]=v});await gp('/api/g/draft',{token:G.token,op:'put',draft:o})}catch(e){}},1500)},
+ pzPull=async()=>{try{if(!G.token||!G.d||pzCl.busy||Date.now()-pzCl.at<60000)return;pzCl.busy=1;pzCl.at=Date.now();const j=await gp('/api/g/draft',{token:G.token,op:'get'}),c=j&&j.draft;pzCl.ok=1;if(!c||typeof c!=='object')return;const p=gk();p.pq=p.pq||{};let ch=0;Object.keys(c).slice(0,20).forEach(id=>{const v=pzSan(c[id]),l=p.pq[id];if(!v)return;if(!l||(l.st!=='pending'&&(v.st==='pending'||v.at>(+l.at||0)))){p.pq[id]=v;ch=1}});if(ch){gvSet(p);const m=$('#modal');if(!(m&&m.classList.contains('open')))render()}pzPush()}catch(e){}finally{pzCl.busy=0}};
+const pzClean=()=>{try{const p=gk(),Q=p.pq||{},ids=Object.keys(Q);if(!ids.length&&!(p.pay||[]).some(r=>r.sub))return;const paid=new Set(pzRcpts().map(r=>String(r.t||'').toLowerCase())),open=new Set(pzDues().map(x=>x.id)),rj={};
+ (gd().msgs||[]).forEach(m=>{if(m.f!=='s')return;const k=/^❌[^\n]*? Ref (P[0-9A-F]{8})(?: · [A-Z]{3} [\d.]+(?: · ([^\n]*))?)?/.exec(String(m.x||''));if(k)rj[k[1]]=k[2]||''});
+ let ch=0;ids.forEach(id=>{const q=Q[id];if(q.st==='pending'?(q.t&&paid.has(String(q.t).toLowerCase())):!open.has(id)){delete Q[id];ch=1}else if(q.st==='pending'&&q.sub&&(q.sub in rj)){Q[id]={st:'rejected',rs:rj[q.sub],at:Date.now()};ch=1}});
+ const n=(p.pay||[]).length;p.pay=(p.pay||[]).filter(r=>!(r.sub&&(paid.has(String(r.t||'').toLowerCase())||(r.sub in rj))));if(p.pay.length!==n)ch=1;
+ if(ch){p.pq=Q;gvSet(p);pzPush()}}catch(e){}};
+const pzDues=()=>{const d=gd()||{},f=d.fees||{},td=today(),R0=pzRcpts(),led=new Set(f.rc||[]),got=(id,cu,sk)=>Math.round(R0.filter(r=>r.c===id&&(!r.u||r.u===cu)&&!(sk&&led.has(r.n))).reduce((a,r)=>a+(+r.a||0),0)*100)/100,out=[],F=gxFee(),fr=Math.round((F.due-got('FI@'+mon(),F.base,1))*100)/100;
+ if(F.items.length&&fr>0)out.push({id:'FI@'+mon(),t:gl(...pzCat.m),a:fr,due:'',cur:F.base});
+ (f.chg||[]).forEach(c=>{if(!c||!c.id||(c.from&&c.from>td))return;const rec=c.rec==='monthly',id=rec?c.id+'@'+mon():c.id,cu=f.cur||'BDT',rm=Math.round(((+c.a||0)-got(id,cu,0))*100)/100;if(rm<=0)return;
+  out.push({id,t:c.k==='c'||!pzCat[c.k]?(c.t||gl(...pzCat.c)):gl(...pzCat[c.k]),a:rm,due:rec?(c.due?mon()+'-'+String(c.due).slice(8,10):''):(c.due||''),cur:f.cur||'BDT'})});
+ return out.filter(x=>x.a>0)};
+const pzBadge=s=>s&&s.st==='pending'?['pe',gl('Awaiting approval','অনুমোদনের অপেক্ষায়')]:s&&s.st==='draft'?['dr',gl('Payment Pending / Draft','পেমেন্ট পেন্ডিং / ড্রাফট')]:s&&s.st==='rejected'?['rj',gl('Not verified','যাচাই হয়নি')]:['',gx('due')];
+window.pzCards=()=>{pzClean();pzPull();const L=pzDues();if(!L.length)return'';const s=gd().stu||{};
+ return`<section class="pzw">`+L.map(x=>{const q=pzSt(x.id),b=pzBadge(q),pe=q&&q.st==='pending';
+  return`<div class="pzc"><div class="pzh"><span class="pzb ${b[0]}">${esc(b[1])}</span><small>${esc(gx('due'))}</small></div><h3>${esc(s.name||'')}</h3><p class="pzk">${esc(x.t)}${x.due?' · '+gl('Due date','শেষ তারিখ')+' '+esc(x.due):''}</p><div class="pza">${esc(gxFmt(x.a,x.cur,x.cur))}</div>`+
+  (q&&q.st==='rejected'?`<p class="pzn bad">${gl('The institution could not verify your last payment.','প্রতিষ্ঠান আপনার শেষ পেমেন্টটি যাচাই করতে পারেনি।')}${q.rs?' '+esc(q.rs):''}</p>`:'')+
+  (pe?`<p class="pzn">${gl('Payment submitted. The institution will approve it shortly and your receipt will arrive here.','পেমেন্ট জমা হয়েছে। প্রতিষ্ঠান শীঘ্রই অনুমোদন দিলে রসিদ এখানে আসবে।')}</p>`:`<button type="button" class="pzp" onclick="pzOpen('${esc(x.id)}')">${q&&q.st==='draft'?gl('Resume payment','পেমেন্ট চালিয়ে যান'):pzPayL()}</button>`)+`</div>`}).join('')+`</section>`};
+window.pzBlock=has=>{const c=pzCards();return c||((has||pzRcpts().length)?`<section class="glass p-4 ok text-center"><b>${gx('cleared')}</b></section>`:'')};
+/* ---------- payment modal + draft recovery ---------- */
+let pzS=null,pzBusy=0;
+const pzDraft=()=>{if(!pzS)return;pzPut(pzS.id,{st:'draft',sc:pzS.sc,m:pzS.m,n:pzS.n,t:pzS.t,a:+pzS.a||pzS.x.a,cur:pzS.x.cur,at:Date.now()})},
+ pzRead=()=>{if(!pzS)return;const n=$('#pzN'),t=$('#pzT');if(n)pzS.n=n.value;if(t)pzS.t=t.value;const a=$('#pzA');if(a)pzS.a=a.value};
+window.pzOpen=id=>{const x=pzDues().find(q=>q.id===id);if(!x)return render();const q=pzSt(id)||{};if(q.st==='pending')return;pzS={id,x,sc:q.sc||'L',m:q.m||'',n:q.n||'',t:q.t||'',a:(q.a>0&&q.a<=x.a)?q.a:x.a};pzDraft();pzMod()};
+window.pzIn=()=>{pzRead();pzDraft()};
+window.pzSc=c=>{pzRead();pzS.sc=c;pzS.m='';pzDraft();pzMod()};
+window.pzM=m=>{pzRead();pzS.m=m;pzDraft();pzMod()};
+const pzGw=m=>{const k=(m==='Visa'||m==='Mastercard')?'Stripe':m,u=String(((gd().fees||{}).pm||{})[k]||'');return/^https:\/\/[^\s"'<>]{4,300}$/i.test(u)?u:''};
+const pzAF=(S0,x)=>`<label for="pzA">${gX('Amount to pay now ('+x.cur+'). You may pay part of the due.','এখন পরিশোধের পরিমাণ ('+x.cur+')। বাকির একটি অংশও দিতে পারেন।')}</label><input id="pzA" type="number" inputmode="decimal" min="1" step="0.01" max="${esc(String(x.a))}" value="${esc(String(S0.a))}" oninput="pzIn()">`;
+const pzMod=()=>{const S0=pzS,x=S0.x,d=gd(),f=d.fees||{},pm=f.pm||{},L=S0.sc==='L',M=L?['bKash','Nagad','Rocket','SSLCommerz']:['Visa','Mastercard','Stripe','PayPal'],mfs=['bKash','Nagad','Rocket'].includes(S0.m),
+ amt=L?gxFmt(x.a,x.cur,x.cur):gxFmt(x.a,x.cur,'USD'),no=mfs?String(pm[S0.m]||''):'',lk=(!mfs&&S0.m)?pzGw(S0.m):'';let body;
+ if(mfs)body=`<div class="pzin">${no?`${gX('Open your '+S0.m+' app and send the amount you enter below (not more than','আপনার '+S0.m+' অ্যাপ খুলে নিচে লেখা পরিমাণ পাঠান (সর্বোচ্চ')} <b>${esc(gxFmt(x.a,x.cur,x.cur))}</b>) ${gX('to this number:','এই নম্বরে:')}<br><b class="no">${esc(no)}</b> <button type="button" class="btn" onclick="navigator.clipboard&&navigator.clipboard.writeText('${esc(no)}').then(()=>toast('${gX('Number copied','নম্বর কপি হয়েছে')}'))">${gX('Copy','কপি')}</button><br>${gX('Then enter your number and the TrxID below.','এরপর নিচে আপনার নম্বর ও TrxID দিন।')}`:`<span class="bad">${gX('The institution has not set a '+S0.m+' number yet. Please contact the office.',S0.m+' নম্বর এখনো সেট করা হয়নি। অনুগ্রহ করে অফিসে যোগাযোগ করুন।')}</span>`}</div>
+  ${pzAF(S0,x)}<label for="pzN">${gX('Number you paid from','যে নম্বর থেকে পরিশোধ করেছেন')}</label><input id="pzN" inputmode="tel" maxlength="20" placeholder="01XXXXXXXXX" value="${esc(S0.n)}" oninput="pzIn()">
+  <label for="pzT">${gX('Transaction ID (TrxID)','ট্রানজ্যাকশন আইডি (TrxID)')}</label><input id="pzT" maxlength="40" value="${esc(S0.t)}" oninput="pzIn()" autocomplete="off">
+  <button type="button" class="pzp mt-4" onclick="pzSubmit()" ${no?'':'disabled'}>${pzSubL()}</button>`;
+ else if(S0.m)body=lk?`<div class="pzin">${gX('Pay on the institution’s own secure '+S0.m+' page (it opens in a new tab). Then come back, enter the amount you paid, your name or email and the transaction ID so the institution can verify it.',S0.m+' এ প্রতিষ্ঠানের নিজস্ব নিরাপদ পেজে পেমেন্ট করুন (নতুন ট্যাবে খুলবে)। তারপর ফিরে এসে পরিশোধিত পরিমাণ, আপনার নাম/ইমেইল ও ট্রানজ্যাকশন আইডি দিন, যাতে প্রতিষ্ঠান যাচাই করতে পারে।')}<br><button type="button" class="btn mt-2" onclick="pzGo()">${gX('Open secure payment page','নিরাপদ পেমেন্ট পেজ খুলুন')}</button></div>${pzAF(S0,x)}
+  <label for="pzN">${gX('Your name or email used for the payment','পেমেন্টে ব্যবহৃত আপনার নাম বা ইমেইল')}</label><input id="pzN" maxlength="60" value="${esc(S0.n)}" oninput="pzIn()" autocomplete="off">
+  <label for="pzT">${gX('Transaction ID (TrxID)','ট্রানজ্যাকশন আইডি (TrxID)')}</label><input id="pzT" maxlength="40" value="${esc(S0.t)}" oninput="pzIn()" autocomplete="off">
+  <button type="button" class="pzp mt-4" onclick="pzSubmit()">${pzSubL()}</button>`:`<div class="pzin"><span class="bad">${gX('The institution has not enabled '+S0.m+' yet. Please choose another method or contact the office.',S0.m+' এখনো প্রতিষ্ঠান চালু করেনি। অনুগ্রহ করে অন্য মাধ্যম বাছুন বা অফিসে যোগাযোগ করুন।')}</span></div>`;
+ else body=`<p class="text-sm mu">${gX('Choose a payment method','একটি পেমেন্ট মাধ্যম বাছুন')}</p>`;
+ modal(`<div class="pzm"><h3>${pzPayL()}</h3><p class="sub">${esc((d.stu||{}).name||'')} · ${esc(x.t)}</p><div class="pzamt">${esc(amt)}</div>
+ <div class="pzseg"><button type="button" class="${L?'on':''}" onclick="pzSc('L')">${gX('Local (BDT)','লোকাল (BDT)')}</button><button type="button" class="${L?'':'on'}" onclick="pzSc('G')">${gX('Global (USD)','গ্লোবাল (USD)')}</button></div>
+ <div class="pzg">${M.map(m=>`<button type="button" class="pzmb ${S0.m===m?'on':''}" onclick="pzM('${m}')">${m}</button>`).join('')}</div>${body}
+ <p class="pzfn">${gX('If you close this window your progress is saved as a draft.','এই উইন্ডো বন্ধ করলেও আপনার অগ্রগতি ড্রাফট হিসেবে সংরক্ষিত থাকবে।')}</p></div>`)};
+window.pzGo=()=>{if(!pzS||pzBusy)return;pzRead();pzDraft();const u=pzGw(pzS.m);if(!u)return toast(gX('The institution has not enabled this payment method yet','প্রতিষ্ঠান এখনো এই পেমেন্ট মাধ্যম চালু করেনি'));try{window.open(u,'_blank','noopener,noreferrer')}catch(e){}toast(gX('After paying, enter the amount, your name or email and the transaction ID below, then press Submit','পেমেন্টের পর নিচে পরিমাণ, আপনার নাম/ইমেইল ও ট্রানজ্যাকশন আইডি দিয়ে সাবমিট করুন'))};
+window.pzSubmit=async()=>{if(!pzS||pzBusy)return;pzRead();const S0=pzS,x=S0.x,n=S0.n.trim(),t=S0.t.trim(),m=S0.m,pm=(gd().fees||{}).pm||{},mfs=['bKash','Nagad','Rocket'].includes(m),a=Math.round((+S0.a||0)*100)/100;
+ if(mfs?!pm[m]:!pzGw(m))return toast(gX('The institution has not set this payment method yet','প্রতিষ্ঠান এই পেমেন্ট মাধ্যম এখনো সেট করেনি'));
+ if(mfs?!/^\+?[\d\s\-().]{7,20}$/.test(n):!/^[^·\n]{3,60}$/.test(n))return toast(mfs?gX('Enter a valid mobile number','সঠিক মোবাইল নম্বর দিন'):gX('Enter your name or email used for the payment','পেমেন্টে ব্যবহৃত নাম বা ইমেইল দিন'));
+ if(t.length<4||!/^[\w\-]+$/.test(t))return toast(gX('Enter the transaction ID (TrxID)','ট্রানজ্যাকশন আইডি (TrxID) দিন'));
+ if(!(a>0))return toast(gX('Enter the amount you paid','যে পরিমাণ পরিশোধ করেছেন তা লিখুন'));
+ const due=pzDues().find(q=>q.id===x.id);if(!due)return toast(gX('This fee is already settled','এই ফি ইতিমধ্যে পরিশোধিত'));
+ if(a>due.a+0.009)return toast(gX('The amount cannot be more than the due: ','পরিমাণ বাকির চেয়ে বেশি হতে পারবে না: ')+gxFmt(due.a,due.cur,due.cur));
+ const tk=t.toLowerCase(),g0=gk();
+ if(pzRcpts().some(r=>String(r.t||'').toLowerCase()===tk)||Object.keys(g0.pq||{}).some(i=>{const q=g0.pq[i];return q&&q.st==='pending'&&String(q.t||'').toLowerCase()===tk})||(g0.pay||[]).some(r=>r.sub&&String(r.t||'').toLowerCase()===tk))return toast(gX('This TrxID was already submitted. Enter the correct, unused TrxID.','এই TrxID আগেই জমা দেওয়া হয়েছে। সঠিক ও অব্যবহৃত TrxID দিন।'));
+ if(bad(n+t))return;pzBusy=1;const sub='P'+rh(4).toUpperCase(),cat=String(x.t).replace(/[·\n]/g,' ').slice(0,60);
+ try{await gp('/api/g/send',{token:G.token,text:`[Payment] ${m} · ${x.cur} ${a} · ${n} · TxID ${t} · Ref ${sub} · ${x.id} · ${cat}`.slice(0,1000)})}
+ catch(e){pzBusy=0;return toast((e.message||gX('Could not submit','জমা দেওয়া যায়নি'))+' · '+gX('your draft is saved','ড্রাফট সংরক্ষিত আছে'))}
+ const p=gk();p.pq=p.pq||{};p.pq[x.id]={st:'pending',sub,m,n,t,a,cur:x.cur,sc:S0.sc,at:Date.now()};p.pay=[{m,n,t,a,c:x.cur,d:new Date().toISOString(),sub,cid:x.id}].concat(p.pay||[]).slice(0,50);gvSet(p);pzPush();
+ pzS=null;pzBusy=0;close();render();toast(gX('Submitted. Awaiting institution approval.','জমা হয়েছে। প্রতিষ্ঠানের অনুমোদনের অপেক্ষায়।'))};
+setInterval(async()=>{try{if(G.who!=='student'||!G.token||!G.d||S.view!=='guard'||document.hidden)return;if(!Object.values(gk().pq||{}).some(q=>q.st==='pending'))return;const n0=pzRcpts().length,m0=(G.d.msgs||[]).length,j=await gp('/api/g/data',{token:G.token});G.d=j.d;if((pzRcpts().length!==n0||(G.d.msgs||[]).length!==m0)&&!$('#modal').classList.contains('open'))render()}catch(e){}},6000);
+/* ---------- institution side: snapshot, approvals queue, announcements ---------- */
+const pzX=()=>{const x=w();x.fch=x.fch||[];x.pq=x.pq||[];x.rcp=x.rcp||[];x.pm=x.pm||{};return x};
+window.pzChg=s=>(w().fch||[]).filter(c=>c.tg==='all'||c.tg==='s:'+s.id||c.tg==='c:'+String(s.cls||'').trim().toLowerCase()).map(c=>({id:c.id,k:c.k,t:c.t,a:c.a,due:c.due,from:c.from,rec:c.rec}));
+window.pzRc=s=>(w().rcp||[]).filter(r=>r.d===s.id).slice(0,40);
+window.pzPm=()=>{const m=w().pm||{};const u=k=>/^https:\/\/[^\s"'<>]{4,300}$/i.test(String(m[k]||''))?String(m[k]):'';return{bKash:String(m.bKash||''),Nagad:String(m.Nagad||''),Rocket:String(m.Rocket||''),Stripe:u('Stripe'),PayPal:u('PayPal'),SSLCommerz:u('SSLCommerz')}};
+const pzParse=t=>{const m=/^\[Payment\] (\S+) · ([A-Z]{3}) ([\d.]+) · ([^·]+?) · TxID (\S+) · Ref (P[0-9A-F]{8}) · (\S+) · (.+)$/.exec(String(t||'').replace(/\n/g,' '));return m?{m:m[1],cur:m[2],a:+m[3],n:m[4].trim(),t:m[5],id:m[6],cid:m[7],cat:m[8].trim()}:null};
+const pzExpect=(s,cid)=>{const x=pzX(),cur=x.cur||'BDT',R=x.rcp||[],got=(id,sk)=>Math.round(R.filter(r=>r.c===id&&(!r.u||r.u===cur)&&!(sk&&sk.has(r.n))).reduce((a,r)=>a+(+r.a||0),0)*100)/100;
+ let m=/^FI@(\d{4}-\d{2})$/.exec(String(cid));
+ if(m){const it=String(s.fitems||'').split(',').map(a=>a.split(':')).filter(a=>a[0].trim()&&+a[1]>0),tot=it.reduce((a,b)=>a+(+b[1]),0),Ld=S.DK?S.L.filter(l=>l.t==='Income'&&String(l.c).startsWith('Fee · '+s.name)&&String(l.d).slice(0,7)===m[1]):[],pd=Ld.reduce((a,l)=>a+(+l.a||0),0);
+  return tot>0?{t:pzCat.m[0],cur,rem:Math.round((tot-pd-got(cid,new Set(Ld.map(l=>l.rc))))*100)/100}:null}
+ m=/^(.+?)(?:@\d{4}-\d{2})?$/.exec(String(cid));const c=m&&(x.fch||[]).find(q=>q.id===m[1]);
+ if(!c||!pzChg(s).some(q=>q.id===c.id))return null;
+ return{t:c.k==='c'||!pzCat[c.k]?(c.t||pzCat.c[0]):pzCat[c.k][0],cur,rem:Math.round(((+c.a||0)-got(cid))*100)/100}};
+const pzCheck=p=>{try{const x=pzX(),s=sT(p.sid);if(!s)return'Student not found';if(!(+p.a>0)||!isFinite(+p.a))return'Invalid amount';
+ const tk=String(p.t||'').toLowerCase();if(!tk)return'TrxID missing';
+ if((x.rcp||[]).some(r=>String(r.t||'').toLowerCase()===tk))return'This TrxID is already on an issued receipt';
+ if(x.pq.some(q=>q!==p&&q.st!=='rejected'&&String(q.t||'').toLowerCase()===tk&&(q.st==='approved'||(q.at||0)<(p.at||0)||((q.at||0)===(p.at||0)&&String(q.id)<String(p.id)))))return'Duplicate TrxID: it was already submitted';
+ const e=pzExpect(s,p.cid);if(!e)return'Unknown or inapplicable fee item';if(p.cur!==e.cur)return'Currency does not match ('+e.cur+')';if(e.rem<=0)return'Nothing is due on this item';if(+p.a>e.rem+0.009)return'Amount exceeds the remaining due ('+e.cur+' '+e.rem+')';
+ return''}catch(err){return'Could not validate this payment'}};
+const pzRefresh=()=>{const e=document.getElementById('pzIn');if(e)e.innerHTML=pzInner()};
+window.pzIngest=quiet=>{try{const x=pzX();let n=0;Object.keys(x.gth||{}).forEach(sid=>(x.gth[sid]||[]).forEach(q=>{if(q.f!=='g')return;const r=pzParse(q.x);if(!r||x.pq.some(p=>p.id===r.id))return;const s=sT(sid);x.pq.push({...r,sid,sn:s?s.name:sid,at:q.at||Date.now(),st:'pending'});n++}));
+ if(n){x.pq.sort((a,b)=>(b.at||0)-(a.at||0));x.pq=x.pq.slice(0,300);save();if(!quiet){toast('💳 '+n+' payment'+(n>1?'s':'')+' awaiting approval');try{if('Notification' in window&&Notification.permission==='granted'&&document.hidden)new Notification('ClasSphera',{body:n+' payment(s) awaiting approval'})}catch(e){}}pzRefresh()}}catch(e){}};
+{const a=window.gaPoll;window.gaPoll=async function(){await a.apply(this,arguments);if(adm())pzIngest()};const b=window.gaSync;window.gaSync=async function(){const r=await b.apply(this,arguments);if(adm())pzIngest();return r}}
+const pzInner=()=>{const x=pzX(),P=x.pq.filter(p=>p.st==='pending'),H=x.pq.filter(p=>p.st!=='pending').slice(0,8),td=today();
+ return`<h3 class="font-bold mb-1">${'Payment Approvals'} ${P.length?`<span class="chip on">${P.length}</span>`:''}</h3><p class="text-xs mu mb-2">Guardian and student fee payments wait here. One click approves, clears the due and sends a verified digital receipt.</p>
+ ${P.length?P.map(p=>{const fl=pzCheck(p);return`<div class="pzq"><b>${esc(p.sn)}</b> <small class="mu">${esc(p.sid)}</small><br>${esc(p.cat)} · <b>${esc(p.cur)} ${(+p.a).toLocaleString()}</b> · ${esc(p.m)}<br><small class="mu">From ${esc(p.n)} · TrxID ${esc(p.t)} · ${esc(new Date(p.at).toLocaleString())}</small><div class="r">${fl?`<p class="text-xs bad" style="width:100%">⚠ ${esc(fl)}</p>`:`<button class="btn pri" onclick="pzApprove('${esc(p.id)}')">Approve</button>`}<button class="btn bad" onclick="pzReject('${esc(p.id)}')">Reject</button></div></div>`}).join(''):'<p class="text-sm mu">No payments are waiting.</p>'}
+ ${H.length?`<div class="text-xs mu mt-3 mb-1">Recent decisions</div>${H.map(p=>`<div class="pzrr"><span>${esc(p.sn)} · ${esc(p.cat)} · ${esc(p.cur)} ${(+p.a).toLocaleString()}</span><span class="${p.st==='approved'?'ok':'bad'}">${p.st==='approved'?esc(p.rn||'Approved'):'Rejected'}</span></div>`).join('')}`:''}
+ <hr class="my-4 border-white/10"><h3 class="font-bold mb-1">Merchant / agent numbers</h3><p class="text-xs mu">Guardians see these numbers when they pay by mobile banking.</p>
+ <div class="grid grid-cols-1 sm:grid-cols-3 gap-x-3">${fld('pmb1','bKash',x.pm.bKash||'')}${fld('pmn1','Nagad',x.pm.Nagad||'')}${fld('pmr1','Rocket',x.pm.Rocket||'')}</div><p class="text-xs mu mt-2">Your own https payment links (Stripe Payment Link, PayPal, SSLCommerz). Student fee money goes to your own account, never through the platform checkout.</p><div class="grid grid-cols-1 sm:grid-cols-3 gap-x-3">${fld('pmc1','Card link (Visa / Mastercard / Stripe)',x.pm.Stripe||'')}${fld('pml1','PayPal link',x.pm.PayPal||'')}${fld('pms1','SSLCommerz link',x.pm.SSLCommerz||'')}</div><button class="btn mt-3" onclick="pzSavePm()">Save numbers</button>
+ <hr class="my-4 border-white/10"><h3 class="font-bold mb-1">Announce a fee</h3><p class="text-xs mu">It appears as a Due card with a Pay Now button for the chosen students.</p>
+ <div class="grid grid-cols-2 gap-x-3">${sel('fck','Category',['Monthly Fee','Exam Fee','Custom'])}${fld('fct','Title (Custom only)')}${fld('fca','Amount','','number')}${fld('fcd','Due date','','date')}${fld('fcf','Publish on (empty = now)','','date')}${sel('fcr','Repeat',['Once','Every month'])}</div>${fld('fcg','Applies to: All, a class name, or a student ID','All')}<button class="btn pri mt-3" onclick="pzAnnounce()">Publish fee</button>
+ ${x.fch.length?`<div class="mt-3">${x.fch.map(c=>`<div class="pzrr"><span>${esc(c.t)} · ${esc(String(c.a))}${c.rec==='monthly'?' · monthly':''} · ${esc(c.tg==='all'?'All':c.tg.slice(2))}<small class="block mu">${c.from&&c.from>td?'Scheduled '+esc(c.from):'Published'}${c.due?' · due '+esc(c.due):''}</small></span><button class="btn" onclick="pzDelChg('${esc(c.id)}')">✕</button></div>`).join('')}</div>`:''}`};
+window.pzPanel=()=>{try{if(!can('finance'))return'';pzIngest(true);return`<div class="glass p-5 mt-4" id="pzIn">${pzInner()}</div>`}catch(e){return''}};
+{const f0=D.finance;D.finance=()=>f0()+pzPanel();const p1=D.portal;D.portal=()=>p1()+(adm()?pzPanel():'')}
+window.pzSavePm=()=>{if(!can('finance'))return;const x=pzX(),v={bKash:$('#pmb1').value.trim(),Nagad:$('#pmn1').value.trim(),Rocket:$('#pmr1').value.trim()};
+ for(const k in v){if(v[k]&&!/^[\d+\-\s]{6,20}$/.test(v[k]))return toast(k+': enter digits only');if(bad(v[k]))return}const lk={Stripe:($('#pmc1')||{value:''}).value.trim(),PayPal:($('#pml1')||{value:''}).value.trim(),SSLCommerz:($('#pms1')||{value:''}).value.trim()};for(const k in lk){if(lk[k]&&!/^https:\/\/[^\s"'<>]{4,300}$/i.test(lk[k]))return toast(k+': enter a full https:// payment link');if(bad(lk[k]))return}Object.assign(v,lk);x.pm=v;save();try{window.gaAuto&&gaAuto()}catch(e){}toast('Numbers saved and sent to guardian portals')};
+window.pzAnnounce=()=>{if(!can('finance'))return;const x=pzX(),c=$('#fck').value,k=c==='Monthly Fee'?'m':c==='Exam Fee'?'e':'c',t0=($('#fct').value||'').trim().slice(0,40),a=+$('#fca').value,due=$('#fcd').value,from=$('#fcf').value,rec=$('#fcr').value==='Every month'?'monthly':'',g=($('#fcg').value||'').trim();
+ if(!(a>0))return toast('Enter an amount');if(k==='c'&&!t0)return toast('Enter a title for a custom fee');if(bad(t0+g))return;
+ const s=g&&sT(g)||g&&sT(g.toUpperCase()),tg=!g||/^all$/i.test(g)?'all':s?'s:'+s.id:'c:'+g.toLowerCase();
+ x.fch.unshift({id:'CH'+rid(),k,t:k==='c'?t0:c,a,due,from,rec,tg});x.fch=x.fch.slice(0,100);save();try{window.gaAuto&&gaAuto()}catch(e){}pzRefresh();toast(from&&from>today()?'Fee scheduled':'Fee published to guardian and student portals')};
+window.pzDelChg=id=>{if(!can('finance'))return;const x=pzX();x.fch=x.fch.filter(c=>c.id!==id);save();try{window.gaAuto&&gaAuto()}catch(e){}pzRefresh()};
+const pzNotify=async(x,sid,txt)=>{await gp('/api/g/reply',{sub:S.user.sub,id:x.id,key:nk(),sid,text:txt.slice(0,1000)});x.gth=x.gth||{};(x.gth[sid]=x.gth[sid]||[]).push({f:'s',x:txt,at:Date.now()});x.gin=(x.gin||[]).filter(m=>m.sid!==sid)};
+window.pzApprove=async id=>{if(!can('finance'))return;const x=pzX(),p=x.pq.find(q=>q.id===id);if(!p||p.st!=='pending'||p.busy)return;p.busy=1;
+ const fl=pzCheck(p);if(fl){p.busy=0;return toast(fl)}
+ const s=sT(p.sid)||{name:p.sn,id:p.sid},rn='RC-'+new Date().toISOString().slice(2,7).replace('-','')+'-'+rh(3).toUpperCase(),
+ r={n:rn,i:String(x.inst.name||'').slice(0,60),s:String(s.name||'').slice(0,40),d:s.id,k:String(pzExpect(s,p.cid).t||p.cat).slice(0,40),a:p.a,u:p.cur,m:p.m,f:p.n,r:['bKash','Nagad','Rocket'].includes(p.m)?String((x.pm||{})[p.m]||''):'',t:p.t,at:Date.now(),c:p.cid,b:Math.max(0,Math.round((pzExpect(s,p.cid).rem-p.a)*100)/100)};
+ try{const l=await pzLink(r,p.id);const mg=`✅ Payment approved · Receipt ${rn} · ${p.cur} ${p.a} · ${r.k}\nVerify receipt: ${l}\nRef ${p.id}`,m2=mg.length>1000?`✅ Payment approved · Receipt ${rn}\nVerify receipt: ${l}`:mg;if(m2.length>1000)throw new Error('The receipt link is too long to send. Shorten the institution or student name. Nothing was changed.');await pzNotify(x,p.sid,m2)}catch(e){p.busy=0;return toast(e.message||'Could not notify the guardian. Nothing was changed.')}
+ p.st='approved';p.rn=rn;p.ap=Date.now();p.busy=0;x.rcp.unshift(r);x.rcp=x.rcp.slice(0,500);
+ if(S.DK){try{S.L.unshift({t:'Income',c:String(p.cid).startsWith('FI@')?`Fee · ${s.name} (online)`:`Online fee · ${r.k} · ${s.name}`,a:p.a,cur:p.cur,m:p.m,d:today(),rc:rn});await saveLed()}catch(e){}}
+ save();pzRefresh();try{window.gaAuto&&gaAuto()}catch(e){}toast(S.DK?'Approved. Receipt sent and ledger updated':'Approved and receipt sent. Unlock the finance vault to record it in the ledger')};
+window.pzReject=async id=>{if(!can('finance'))return;const x=pzX(),p=x.pq.find(q=>q.id===id);if(!p||p.st!=='pending'||p.busy)return;const why=(prompt('Reason for rejecting (optional)')||'').trim().slice(0,100);if(bad(why))return;p.busy=1;
+ try{await pzNotify(x,p.sid,`❌ Payment not verified · Ref ${p.id} · ${p.cur} ${p.a}${why?' · '+why:''}`)}catch(e){p.busy=0;return toast(e.message||'Could not notify the guardian')}
+ p.st='rejected';p.busy=0;save();pzRefresh();toast('Rejected. The guardian was told.')};
+
 })();
 
 /* ===== v7: institution modules + module configurator (additive; nothing above is changed) ===== */
@@ -4237,5 +4428,178 @@ textarea{resize:vertical}
 var wrap=function(root){var t=(root||document).querySelectorAll('table');for(var i=0;i<t.length;i++){var p=t[i].parentNode;if(!p||p.getAttribute&&p.getAttribute('data-fw'))continue;var d=document.createElement('div');d.setAttribute('data-fw','1');d.style.cssText='overflow-x:auto;max-width:100%;-webkit-overflow-scrolling:touch';p.insertBefore(d,t[i]);d.appendChild(t[i])}};
 var q=0;var mo=new MutationObserver(function(){clearTimeout(q);q=setTimeout(function(){wrap()},60)});
 mo.observe(document.body,{childList:true,subtree:true});wrap()}catch(e){}})();
+</script>
+<script id="cs-keep-session">
+/* Keep the institution signed in across a page refresh (pull-down, reload, update).
+   The session lives only in this tab (sessionStorage), expires after the same 15 idle minutes the app already uses,
+   is checked with the server on every restore, and is wiped on sign-out. The page you were on is kept by the URL hash. */
+(()=>{try{
+const K='cs_sess',IDLE=900000;
+const rd=()=>{try{return JSON.parse(sessionStorage.getItem(K))}catch(e){return null}};
+const wr=o=>{try{sessionStorage.setItem(K,JSON.stringify(o))}catch(e){}};
+const clr=()=>{try{sessionStorage.removeItem(K)}catch(e){}};
+const toB=buf=>{let t='';new Uint8Array(buf).forEach(c=>t+=String.fromCharCode(c));return btoa(t)};
+const fromB=b=>Uint8Array.from(atob(b),c=>c.charCodeAt(0));
+let lastTok=null,lastDK=null,busy=false;
+
+/* 1 · remember the session as soon as someone is signed in (works for sign-in, OTP sign-in and new sign-up) */
+setInterval(async()=>{
+ if(busy||!S.user||!S.user.token)return;
+ const U=S.user,D=S.DK;if(U.token===lastTok&&D===lastDK)return;
+ busy=true;
+ try{
+  const u=((S.ws&&S.ws.users)||[]).find(x=>x.email===U.email&&x.role===U.role&&x.name===U.name);
+  let dk=null;if(D){try{dk=toB(await crypto.subtle.exportKey('raw',D))}catch(e){}}
+  wr({sub:U.sub,email:U.email,mail:u?(u.mail||''):'',token:U.token,dk,at:Date.now()});
+  lastTok=U.token;lastDK=D
+ }catch(e){}finally{busy=false}
+},500);
+
+/* 2 · keep the "last active" time fresh, so the 15-minute rule still applies after a refresh */
+let tAct=0;
+const act=()=>{const n=Date.now();if(n-tAct<4000)return;tAct=n;const r=rd();if(r){r.at=n;wr(r)}};
+['click','keydown','touchstart','pointerdown'].forEach(e=>addEventListener(e,act,{passive:true,capture:true}));
+addEventListener('pagehide',()=>{const r=rd();if(r&&S.user){r.at=Date.now();wr(r)}});
+
+/* 3 · sign-out (button, 15-minute idle, expired session, access removed) always wipes the saved session */
+if(typeof logout==='function'){const lo0=logout;logout=function(){clr();lastTok=null;lastDK=null;return lo0.apply(this,arguments)}}
+
+/* 4 · after a refresh: ask the server, rebuild the workspace exactly as sign-in does, then show the same page */
+async function restore(){
+ const r=rd();if(!r||!r.token||S.user)return;
+ if(Date.now()-(r.at||0)>IDLE){clr();return}
+ let lj=null;
+ for(let i=0;i<4&&!lj;i++){
+  try{lj=await rq('/api/ws/load',{token:r.token},30000)}
+  catch(e){
+   if(e&&[401,403,404,410].includes(e.status)){clr();return}
+   if(i===3)return;
+   await new Promise(z=>setTimeout(z,2500*(i+1)))
+  }
+ }
+ if(S.user)return;
+ const ws=lj&&lj.ws,u=ws&&Array.isArray(ws.users)&&ws.users.find(x=>x.email===r.email&&(!r.mail||x.mail===r.mail));
+ if(!u){clr();return}
+ S.ws=ws;S.user={sub:r.sub,email:r.email,name:u.name,role:u.role,token:r.token};S.DK=null;S.L=[];
+ if(window.wsAdopt)wsAdopt(ws,lj.revs||{});
+ if(r.dk&&LED.includes(u.role)&&u.wk){try{S.DK=await impDK(fromB(r.dk));await loadLed()}catch(e){S.DK=null;S.L=[]}}
+ lastTok=r.token;lastDK=S.DK;
+ bump();route()
+}
+restore().catch(e=>console.error('session restore',e));
+}catch(e){console.error('keep session',e)}})();
+</script>
+<style id="cs-anim-css">
+/* ClasSphera · homepage scroll entrance + count-up (additive layer; classes are added by JS and removed again when each animation ends) */
+.csa-pre{opacity:0!important;translate:var(--csa-x,0px) var(--csa-y,0px);will-change:opacity,translate;transition:none!important}
+.csa-go{animation:csaIn 1.15s cubic-bezier(.22,1,.36,1) var(--csa-d,0ms) both}
+.csa-l{--csa-x:-56px;--csa-y:0px}
+.csa-r{--csa-x:56px;--csa-y:0px}
+.csa-u{--csa-x:0px;--csa-y:38px}
+.csa-f{--csa-x:0px;--csa-y:0px}
+@keyframes csaIn{from{opacity:0;translate:var(--csa-x,0px) var(--csa-y,0px)}to{opacity:1;translate:0px 0px}}
+@media (max-width:640px){.csa-l{--csa-x:-34px}.csa-r{--csa-x:34px}.csa-u{--csa-y:28px}}
+@media (prefers-reduced-motion:reduce){.csa-pre{opacity:1!important;translate:none}.csa-go{animation:none}}
+@media print{.csa-pre{opacity:1!important;translate:none!important}.csa-go{animation:none!important}}
+</style>
+<script id="cs-anim-js">
+/* ClasSphera · homepage only: slow slide/fade entrance on scroll + number count-up.
+   Touches no text, image, feature or backend logic. Final DOM/text is identical to the original once each animation ends. */
+(function(){try{
+if(!('IntersectionObserver' in window)||!('MutationObserver' in window))return;
+var app=document.getElementById('app');if(!app)return;
+var RM=window.matchMedia&&matchMedia('(prefers-reduced-motion: reduce)');
+var DUR=1150,CNT=2000,seen={},wasHome=false,io=null,cio=null,queued=false;
+var SEL=[
+ ['.hero .hbd','l'],['.hero .h11t','l'],['.hero .h11p','l'],['.hero .h11i > .flex','l'],['.hero .hst','l'],['.hero .h11v','r'],
+ ['.band > div > h2.sh','l'],['.band > div > p.ss','l'],
+ ['.band .fc','a'],['.band .gal .gi','a'],['.band .seg','l'],['.band .fz .fx','a'],['.band .stt > div','a'],['.band .iar .tc','a'],['.promo','r']
+];
+var CSEL=['.hero .hst b','.band .stt b','.hero .h11n'];
+function isHome(){try{return S.view==='home'}catch(e){return false}}
+function reduced(){return !!(RM&&RM.matches)}
+function reset(){if(io){io.disconnect();io=null}if(cio){cio.disconnect();cio=null}}
+function clean(el){
+ el.classList.remove('csa-pre','csa-go','csa-l','csa-r','csa-u','csa-f');
+ el.style.removeProperty('--csa-d');
+ if(el.getAttribute('style')==='')el.removeAttribute('style');
+ if(el.getAttribute('class')==='')el.removeAttribute('class');
+}
+function reveal(el,d){
+ el.style.setProperty('--csa-d',d+'ms');
+ el.classList.remove('csa-pre');el.classList.add('csa-go');
+ var done=function(e){if(e&&(e.target!==el||e.animationName!=='csaIn'))return;el.removeEventListener('animationend',done);clean(el)};
+ el.addEventListener('animationend',done);
+ setTimeout(function(){el.removeEventListener('animationend',done);clean(el)},DUR+d+300);
+}
+function dirOf(el){
+ var p=el.parentElement,r=el.getBoundingClientRect(),sib=p?[].slice.call(p.children):[el],
+ row=sib.filter(function(s){return Math.abs(s.getBoundingClientRect().top-r.top)<8});
+ if(row.length<2)return sib.indexOf(el)%2===0?'l':'r';
+ var pos=row.indexOf(el),mid=(row.length-1)/2;
+ return pos<mid-.01?'l':pos>mid+.01?'r':'u';
+}
+function fmt(v,c){var s=c.dp?v.toFixed(c.dp):String(Math.round(v));return c.comma?Number(s).toLocaleString('en-US',{minimumFractionDigits:c.dp,maximumFractionDigits:c.dp}):s}
+function parseCount(el){
+ var n=el.firstChild;if(!n||n.nodeType!==3)return null;
+ var o=n.nodeValue,m=/^(\s*)(\d[\d,]*(?:\.\d+)?)(\D*)$/.exec(o);if(!m)return null;
+ var t=parseFloat(m[2].replace(/,/g,''));if(!isFinite(t)||t<2)return null;
+ var dp=(m[2].split('.')[1]||'').length;
+ return{node:n,orig:o,lead:m[1],suf:m[3],target:t,dp:dp,comma:m[2].indexOf(',')>-1,start:dp?0:1,el:el};
+}
+function runCount(c){
+ var t0=null;
+ function step(ts){
+  if(!c.el.isConnected)return;
+  if(t0===null)t0=ts;
+  var p=Math.min(1,(ts-t0)/CNT),e=1-Math.pow(1-p,3);
+  if(p<1){c.node.nodeValue=c.lead+fmt(c.start+(c.target-c.start)*e,c)+c.suf;requestAnimationFrame(step)}
+  else c.node.nodeValue=c.orig;
+ }
+ requestAnimationFrame(step);
+}
+function scan(){
+ queued=false;
+ if(!isHome()||reduced()||!app.querySelector('.hero,.band')){if(wasHome){wasHome=false;seen={};reset()}return}
+ var fresh=!wasHome;wasHome=true;
+ var hv=app.querySelector('.h11v'),heroOld=!!(hv&&hv.hasAttribute('data-csa'));
+ var vh=window.innerHeight||document.documentElement.clientHeight;
+ if(!io)io=new IntersectionObserver(function(es){
+  var v=es.filter(function(e){return e.isIntersecting}).sort(function(a,b){var A=a.boundingClientRect,B=b.boundingClientRect;return (A.top-B.top)||(A.left-B.left)});
+  v.forEach(function(e,k){var el=e.target;io.unobserve(el);seen[el.__csaKey]=1;reveal(el,Math.min(k,5)*110)});
+ },{threshold:.12,rootMargin:'0px 0px -6% 0px'});
+ if(!cio)cio=new IntersectionObserver(function(es){
+  es.forEach(function(e){if(!e.isIntersecting)return;var el=e.target,c=el.__csn;cio.unobserve(el);if(!c)return;seen[el.__csnKey]=1;setTimeout(function(){runCount(c)},350)});
+ },{threshold:.01,rootMargin:'0px 0px -8% 0px'});
+ var list=[];
+ SEL.forEach(function(s,si){[].forEach.call(app.querySelectorAll(s[0]),function(el,i){
+  if(el.hasAttribute('data-csa'))return;
+  el.setAttribute('data-csa','1');
+  var key=si+':'+i,r=el.getBoundingClientRect();
+  if((!r.width&&!r.height)||seen[key])return;
+  if(fresh?r.bottom<0:r.top<vh*.98){seen[key]=1;return}
+  list.push([el,key,s[1]]);
+ })});
+ list.forEach(function(a){
+  var el=a[0],d=a[2];
+  if(d==='a')d=dirOf(el);
+  try{if(getComputedStyle(el).display==='inline')d='f'}catch(e){}
+  el.__csaKey=a[1];el.classList.add('csa-pre','csa-'+d);io.observe(el);
+ });
+ CSEL.forEach(function(sel,si){[].forEach.call(app.querySelectorAll(sel),function(el,i){
+  if(el.hasAttribute('data-csn'))return;
+  el.setAttribute('data-csn','1');
+  var key='c'+si+':'+i,tab=(sel==='.hero .h11n'&&heroOld);
+  if(seen[key]&&!tab)return;
+  var c=parseCount(el);if(!c)return;
+  var r=el.getBoundingClientRect();
+  if(!tab&&(fresh?r.bottom<0:r.top<vh*.98)){seen[key]=1;return}
+  c.node.nodeValue=c.lead+fmt(c.start,c)+c.suf;
+  el.__csn=c;el.__csnKey=key;cio.observe(el);
+ })});
+}
+new MutationObserver(function(){if(queued)return;queued=true;Promise.resolve().then(scan)}).observe(app,{childList:true,subtree:true});
+scan();
+}catch(e){try{console.warn('home animations',e);[].forEach.call(document.querySelectorAll('.csa-pre'),function(el){el.classList.remove('csa-pre')})}catch(_){}}})();
 </script>
 </body></html>

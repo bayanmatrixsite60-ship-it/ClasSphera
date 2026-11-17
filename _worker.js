@@ -143,6 +143,19 @@ const SCHEMA=[
   'CREATE TABLE IF NOT EXISTS push_q(id INTEGER PRIMARY KEY AUTOINCREMENT,sub TEXT NOT NULL,who TEXT NOT NULL,sid TEXT NOT NULL,pl TEXT NOT NULL,cur TEXT NOT NULL DEFAULT \'\',at INTEGER NOT NULL)']] /* readable push: subscription keys for encrypted payloads, plus a small queue for broadcasts that are larger than one request can send */
 ,['2.9',['CREATE INDEX IF NOT EXISTS idx_portal_sid ON portal(sid)','CREATE INDEX IF NOT EXISTS idx_portal_ph ON portal(ph)']] /* guardian / student sign-in finds the row by mobile number or admission ID alone; the Secret PIN decides which institution it belongs to */
 ,['3.0',['CREATE TABLE IF NOT EXISTS portal_pin(pk TEXT PRIMARY KEY,sub TEXT NOT NULL,sid TEXT NOT NULL)','CREATE INDEX IF NOT EXISTS idx_portal_pin_sub ON portal_pin(sub)','DROP INDEX IF EXISTS idx_portal_sid','DROP INDEX IF EXISTS idx_portal_ph']] /* one row per Secret PIN across ALL institutions: pk is a lookup hash of the PIN and is the PRIMARY KEY, so two students can never hold the same PIN */
+,['3.1',['CREATE TABLE IF NOT EXISTS fee_cfg(sub TEXT PRIMARY KEY,data TEXT NOT NULL,updated TEXT)',
+  "CREATE TABLE IF NOT EXISTS fee_due(id TEXT PRIMARY KEY,sub TEXT NOT NULL,sid TEXT NOT NULL,cat TEXT NOT NULL,title TEXT NOT NULL DEFAULT '',amt REAL NOT NULL,cur TEXT NOT NULL DEFAULT 'BDT',due_on TEXT NOT NULL DEFAULT '',publish_at INTEGER NOT NULL,status TEXT NOT NULL DEFAULT 'due',nt INTEGER NOT NULL DEFAULT 0,paid_at INTEGER,batch TEXT NOT NULL DEFAULT '')",
+  'CREATE INDEX IF NOT EXISTS idx_fee_due_stu ON fee_due(sub,sid,status,publish_at)','CREATE INDEX IF NOT EXISTS idx_fee_due_batch ON fee_due(sub,batch)',
+  "CREATE TABLE IF NOT EXISTS fee_rule(id TEXT PRIMARY KEY,sub TEXT NOT NULL,cat TEXT NOT NULL,title TEXT NOT NULL DEFAULT '',amt REAL NOT NULL,cur TEXT NOT NULL DEFAULT 'BDT',cls TEXT NOT NULL DEFAULT '',sids TEXT NOT NULL DEFAULT '',day INTEGER NOT NULL DEFAULT 1,next_at INTEGER NOT NULL,active INTEGER NOT NULL DEFAULT 1)",
+  "CREATE TABLE IF NOT EXISTS fee_pay(id TEXT PRIMARY KEY,sub TEXT NOT NULL,sid TEXT NOT NULL,due_id TEXT NOT NULL,status TEXT NOT NULL,method TEXT NOT NULL DEFAULT '',cur TEXT NOT NULL DEFAULT 'BDT',amt REAL NOT NULL DEFAULT 0,from_no TEXT NOT NULL DEFAULT '',rcv_no TEXT NOT NULL DEFAULT '',trx TEXT NOT NULL DEFAULT '',reason TEXT NOT NULL DEFAULT '',created INTEGER NOT NULL,updated INTEGER NOT NULL,decided_by TEXT,decided_at INTEGER)",
+  "CREATE UNIQUE INDEX IF NOT EXISTS idx_fee_pay_open ON fee_pay(due_id) WHERE status IN ('draft','pending')",
+  "CREATE UNIQUE INDEX IF NOT EXISTS idx_fee_pay_trx ON fee_pay(sub,method,trx) WHERE trx<>'' AND status IN ('pending','approved')",
+  'CREATE INDEX IF NOT EXISTS idx_fee_pay_q ON fee_pay(sub,status,created)',
+  'CREATE TABLE IF NOT EXISTS fee_receipt(code TEXT PRIMARY KEY,no TEXT NOT NULL,pay_id TEXT NOT NULL UNIQUE,sub TEXT NOT NULL,sid TEXT NOT NULL,inst TEXT,stu TEXT,cls TEXT,cat TEXT,title TEXT,amt REAL NOT NULL,cur TEXT NOT NULL,method TEXT,from_no TEXT,rcv_no TEXT,trx TEXT,pat INTEGER,at INTEGER NOT NULL,sig TEXT NOT NULL,appr TEXT)',
+  'CREATE INDEX IF NOT EXISTS idx_fee_rc_stu ON fee_receipt(sub,sid,at)']] /* fee payments: dues, payment attempts (draft/pending/approved/rejected), permanent receipts, merchant numbers */
+,['3.2',['CREATE TABLE IF NOT EXISTS pz_receipts(inst TEXT NOT NULL,trx TEXT NOT NULL,ref TEXT NOT NULL DEFAULT \'\',rno TEXT NOT NULL,sig TEXT NOT NULL,revoked INTEGER NOT NULL DEFAULT 0,at INTEGER NOT NULL,PRIMARY KEY(inst,trx))','CREATE INDEX IF NOT EXISTS idx_pz_rc_sig ON pz_receipts(sig)',
+  'CREATE TABLE IF NOT EXISTS pz_drafts(sub TEXT NOT NULL,sid TEXT NOT NULL,who TEXT NOT NULL,body TEXT NOT NULL,updated INTEGER NOT NULL,PRIMARY KEY(sub,sid,who))']] /* signed receipt links (one row per TrxID per institution) + cloud copy of unfinished payment drafts */
+,['3.3',['CREATE TABLE IF NOT EXISTS gv_prof(sub TEXT NOT NULL,sid TEXT NOT NULL,who TEXT NOT NULL,body TEXT NOT NULL,updated INTEGER NOT NULL,PRIMARY KEY(sub,sid,who))']] /* saved profile (photos, details, homework ticks, study hub) of one guardian or student, so every device shows the same after sign-in */
 ];
 let MIGRATED=null;
 function migrate(env){
@@ -161,7 +174,28 @@ const dbAudit=(env,kind,detail,ip)=>env.DB.prepare('INSERT INTO audit(kind,detai
 const dbInst=(env,sub)=>env.DB.prepare('SELECT sub,name,itype,country FROM institutions WHERE sub = ?').bind(sub).first();
 
 /* ───────────── founder notifications, alerts, audit trail ───────────── */
-async function tg(env,text){if(!env.TG_TOKEN||!env.TG_CHAT)return false;try{const r=await fetch(`https://api.telegram.org/bot${env.TG_TOKEN}/sendMessage`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({chat_id:env.TG_CHAT,text:text.slice(0,4000),parse_mode:'HTML',disable_web_page_preview:true})});return r.ok}catch{return false}}
+/* Telegram sender. Fixes the silent failures: secrets are cleaned (stray spaces/newlines, quotes, a pasted "bot" prefix),
+   long text is cut on a line boundary (a cut tag made Telegram answer 400), an HTML parse error is retried once as plain text,
+   a 429 is retried once, and the real reason Telegram gave is written to the Worker logs (the token is never logged). */
+async function tg(env,text){
+ const clean=v=>String(v==null?'':v).trim().replace(/^["']+|["']+$/g,'').trim(),tok=clean(env&&env.TG_TOKEN).replace(/^bot/i,''),chat=clean(env&&env.TG_CHAT);
+ if(!tok||!chat){console.error('[ClasSphera] Telegram not sent: '+(!tok?'TG_TOKEN':'TG_CHAT')+' is empty or missing in this environment. Set it for the environment that is live (Pages: Production and Preview are separate), then redeploy.');return false}
+ let t=String(text==null?'':text);
+ if(t.length>4000){const c=t.lastIndexOf('\n',3950);t=t.slice(0,c>500?c:3950)+'\n…'}
+ const plain=s=>s.replace(/<[^>]*$/,'').replace(/<[^>]*>/g,'').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&amp;/g,'&');
+ const url=`https://api.telegram.org/bot${tok}/sendMessage`;
+ const send=async extra=>{
+  const r=await fetch(url,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({chat_id:chat,disable_web_page_preview:true,...extra}),signal:typeof AbortSignal!=='undefined'&&AbortSignal.timeout?AbortSignal.timeout(8000):undefined});
+  let j=null;try{j=await r.json()}catch{}
+  return{ok:r.ok&&!(j&&j.ok===false),st:r.status,d:String((j&&j.description)||'').slice(0,200),ra:+(j&&j.parameters&&j.parameters.retry_after)||0}};
+ try{
+  let r=await send({text:t,parse_mode:'HTML'});
+  if(!r.ok&&r.st===400&&/parse entities|unsupported start tag|can't find end|unclosed/i.test(r.d))r=await send({text:plain(t)});
+  if(!r.ok&&r.st===429&&r.ra>0&&r.ra<=3){await new Promise(z=>setTimeout(z,r.ra*1000+250));r=await send({text:t,parse_mode:'HTML'})}
+  if(!r.ok){const hint=r.st===401||r.st===404?' → TG_TOKEN is wrong or revoked (copy it again from @BotFather)':r.st===400&&/chat not found/i.test(r.d)?' → TG_CHAT is wrong, or the bot was never started / added (open the bot and press Start, or add it to the group/channel as admin)':r.st===403?' → the bot was blocked, removed, or cannot post in that chat':'';
+   console.error(`[ClasSphera] Telegram rejected the message: HTTP ${r.st} · ${r.d||'no description'}${hint}`)}
+  return r.ok
+ }catch(e){console.error('[ClasSphera] Telegram request failed: '+String(e&&e.message||e).slice(0,200));return false}}
 async function r2log(env,kind,detail,ip){if(!env.R2)return;try{const d=new Date();await env.R2.put(`audit/${d.toISOString().slice(0,10)}/${d.getTime()}-${rnd(4)}.json`,JSON.stringify({kind,detail:String(detail).slice(0,500),ip,at:d.toISOString(),v:APP_V}),{httpMetadata:{contentType:'application/json'}})}catch{}}
 /* security alert: audited, mirrored to R2, hourly cap of 60 Telegram messages */
 async function alert(env,ip,kind,detail){await dbAudit(env,kind,detail,ip);await r2log(env,kind,detail,ip);try{if(await spend(env,'alg',1,60,3600))return false}catch{}return tg(env,`🚨 <b>${X(kind)}</b>\n${X(detail)}\nIP: ${X(ip)}`)}
@@ -1027,6 +1061,165 @@ async function gQuick(C){
  const att=Object.values(d.att||{}),pr=att.filter(a=>a&&(a.s==='P'||a.s==='L')).length,f=d.fees||{},tot=(f.items||[]).reduce((a,x)=>a+(+x.a||0),0);
  return J({d:{name:str(d.stu&&d.stu.name,80),cls:str(d.stu&&d.stu.cls,40),att:att.length?Math.round(pr*100/att.length):0,fee:tot&&f.paid!=null&&+f.paid>=tot?'Paid':tot?'Due':'—',hifz:str(d.quran,80)||'—'}})}
 
+/* ───────────── Fee payment & digital receipts · Guardian / Student Fee module ─────────────
+   fee_due      one row per student per charge (monthly / exam / custom). Published now or on a chosen date; fee_rule repeats a charge monthly.
+   fee_pay      the payment attempt: draft → pending → approved | rejected. Always scoped by sub (institution) + sid (student).
+                The amount is recomputed on the server from the due row and the institution's rate, never taken from the browser.
+   fee_receipt  permanent, HMAC-signed digital receipt, opened from /api/fee/verify?c=<code> (not purged with chat messages).
+   fee_cfg      per-institution merchant / agent numbers and gateway links.
+   Staff routes read the institution from the signed session (never from the request); guardian / student routes use the portal token (gt:). */
+const FEE_MFS=['bKash','Nagad','Rocket'],FEE_LOCAL=[...FEE_MFS,'SSLCommerz'],FEE_GLOBAL=['Visa','Mastercard','Stripe','PayPal'],FEE_ALL=[...FEE_LOCAL,...FEE_GLOBAL];
+const BDMOB=/^(?:\+?88)?01[3-9]\d{8}$/,FEE_REF=/^[A-Z0-9][A-Z0-9_-]{4,39}$/,FEE_ID=/^[A-Z0-9-]{1,24}$/;
+const fm2=v=>Math.round((+v||0)*100)/100;
+const feeTs=(v,d)=>{const t=typeof v==='number'?v:Date.parse(String(v||''));return Number.isFinite(t)&&t>1e12&&t<Date.now()+1.1e11?Math.floor(t):d};
+const feeMask=v=>{v=String(v||'');return v.length>6?v.slice(0,3)+'•'.repeat(Math.min(v.length-6,12))+v.slice(-3):v};
+function feeCfgClean(x){x=isO(x)?x:{};const src=isO(x.m)?x.m:{},m={};
+ for(const g of FEE_ALL){const a=isO(src[g])?src[g]:{},u=String(a.url||'').trim();
+  m[g]={no:str(a.no,60),kind:['Personal','Agent','Merchant'].includes(a.kind)?a.kind:'Personal',url:/^https:\/\/\S{4,300}$/.test(u)?u:'',note:str(a.note,200)}}
+ return{m,rate:Math.max(0,Math.min(100000,fm2(x.rate)))}}
+const feeOn=(c,g)=>FEE_MFS.includes(g)?!!c.m[g].no:!!(c.m[g].no||c.m[g].url||c.m[g].note);
+async function feeCfg(env,sub){const r=await sq(env,'SELECT data FROM fee_cfg WHERE sub=?',sub).first();let d={};try{d=JSON.parse(r&&r.data||'{}')}catch{}return feeCfgClean(d)}
+const feePub=c=>({rate:c.rate,m:Object.fromEntries(FEE_ALL.filter(g=>feeOn(c,g)).map(g=>[g,c.m[g]]))});
+const feeConv=(a,from,to,rate)=>from===to?fm2(a):rate>0?fm2(from==='BDT'?a/rate:a*rate):null; /* rate = BDT per 1 USD, set by the institution */
+const feeSig=(env,o)=>hmac(env,'rcpt|'+[o.code,o.no,o.sub,o.sid,o.amt,o.cur,o.method,o.trx,o.at].join('|'));
+async function feeWho(C){const tk=String(C.b.token||'').slice(0,60),t=/^[0-9a-f]{48}$/.test(tk)?JSON.parse(await C.env.KV.get('gt:'+tk)||'null'):null;if(!t||!t.sub||!t.sid)throw new Err(401,'expired');return t}
+async function feeDue(env,t,id){const r=await sq(env,"SELECT * FROM fee_due WHERE id=? AND sub=? AND sid=? AND status='due' AND publish_at<=?",String(id||'').slice(0,100),t.sub,t.sid,Date.now()).first();if(!r)throw new Err(404,'This fee is no longer due');return r}
+
+/* ---- scheduling: recurring monthly rules and charges published on a date are created / announced lazily, on the first fee request after their time ---- */
+const feeNext=(ms,day)=>{const d=new Date(ms);return Date.UTC(d.getUTCFullYear(),d.getUTCMonth()+1,Math.min(28,day||d.getUTCDate()),d.getUTCHours(),d.getUTCMinutes())};
+const feeExpand=(env,o)=>sq(env,"INSERT OR IGNORE INTO fee_due(id,sub,sid,cat,title,amt,cur,due_on,publish_at,status,nt,batch) SELECT ?1||':'||sid,?2,sid,?3,?4,?5,?6,?7,?8,'due',0,?1 FROM portal WHERE sub=?2 AND (?9='' OR json_extract(d,'$.stu.cls')=?9) AND (?10='' OR sid IN (SELECT value FROM json_each(?10)))",o.batch,o.sub,o.cat,o.title,o.amt,o.cur,o.due_on||'',o.at,o.cls||'',o.sids||'').run();
+async function feeNotifyNew(C,sub){const env=C.env,rows=(await sq(env,"SELECT id,sid,cat,title,amt,cur FROM fee_due WHERE sub=? AND status='due' AND nt=0 AND publish_at<=? LIMIT 300",sub,Date.now()).all()).results||[];if(!rows.length)return;
+ await sq(env,'UPDATE fee_due SET nt=1 WHERE sub=?1 AND id IN (SELECT value FROM json_each(?2))',sub,JSON.stringify(rows.map(r=>r.id))).run();
+ bg(C,inApp(env,sub,rows.map(r=>({sid:r.sid,ev:'Fee due',msg:'💳 ফি বকেয়া / Fee due: '+(r.title||r.cat)+' — '+r.amt+' '+r.cur+'. পরিশোধ করুন / Pay now.'})),C))}
+async function feeRun(C,sub){const env=C.env,now=Date.now();let made=0;
+ const rules=(await sq(env,'SELECT * FROM fee_rule WHERE sub=? AND active=1 AND next_at<=? LIMIT 20',sub,now).all()).results||[];
+ for(const r of rules){const due=[];let nx=r.next_at;for(;nx<=now&&due.length<60;nx=feeNext(nx,r.day))due.push(nx);
+  for(const at of due.slice(-3)){const x=await feeExpand(env,{batch:'r'+r.id+':'+new Date(at).toISOString().slice(0,7),sub,cat:r.cat,title:r.title,amt:r.amt,cur:r.cur,at,cls:r.cls,sids:r.sids});made+=(x.meta&&x.meta.changes)||0}
+  await sq(env,'UPDATE fee_rule SET next_at=? WHERE id=? AND sub=?',nx,r.id,sub).run()}
+ await feeNotifyNew(C,sub);return made}
+const feeTick=(C,sub)=>hitMem('ftk:'+sub,1,15000)?0:feeRun(C,sub).catch(e=>{console.error('fee tick failed:',e&&e.message)});
+
+/* ---- institution (Admin / Accountant) ---- */
+async function feeCfgRoute(C){const s=await need(C,['Admin','Accountant']);
+ if(isO(C.b.set)){if(s.role!=='Admin')throw new Err(403,'Only the Admin can change merchant numbers'); /* a payment number decides where money goes */
+  const c=feeCfgClean(C.b.set);await sq(C.env,'INSERT INTO fee_cfg(sub,data,updated) VALUES(?,?,?) ON CONFLICT(sub) DO UPDATE SET data=excluded.data,updated=excluded.updated',s.sub,JSON.stringify(c),iso()).run();
+  bg(C,dbAudit(C.env,'fee_cfg',s.sub+' by '+str(s.ph,40),C.ip));return J({ok:true,cfg:c})}
+ return J({ok:true,cfg:await feeCfg(C.env,s.sub)})}
+async function feeAnnounce(C){const s=await need(C,['Admin','Accountant']),{env,b}=C,sub=s.sub;
+ if(hitMem('fan:'+sub,60,3600000))throw new Err(429,'rate limited');
+ const cat=str(b.cat,40)||'Custom',title=str(b.title,80),amt=fm2(b.amt),cur=b.cur==='USD'?'USD':'BDT',now=Date.now(),at=feeTs(b.at,now),
+  dueOn=/^\d{4}-\d{2}-\d{2}$/.test(String(b.due_on||''))?String(b.due_on):'',cls=str(b.cls,40),
+  sids=[...new Set((Array.isArray(b.sids)?b.sids:String(b.sids||'').split(/[\s,;]+/)).map(x=>String(x).toUpperCase().trim()).filter(x=>FEE_ID.test(x)))].slice(0,2000),sj=sids.length?JSON.stringify(sids):'';
+ if(!(amt>0&&amt<=1e8))throw new Err(400,'Enter a valid amount');
+ let created=0;
+ if(b.repeat==='monthly'){await sq(env,'INSERT INTO fee_rule(id,sub,cat,title,amt,cur,cls,sids,day,next_at,active) VALUES(?,?,?,?,?,?,?,?,?,?,1)','x'+rnd(6),sub,cat,title,amt,cur,cls,sj,Math.min(28,new Date(at).getUTCDate()),at).run();created=await feeRun(C,sub)}
+ else{const r=await feeExpand(env,{batch:'a'+rnd(6),sub,cat,title,amt,cur,due_on:dueOn,at,cls,sids:sj});created=(r.meta&&r.meta.changes)||0;await feeNotifyNew(C,sub)}
+ return J({ok:true,created,scheduled:at>now})}
+async function feeRuleRoute(C){const s=await need(C,['Admin','Accountant']),{env,b}=C,sub=s.sub;
+ if(b.rule){await sq(env,'UPDATE fee_rule SET active=0 WHERE id=? AND sub=?',str(b.rule,40),sub).run();return J({ok:true})}
+ if(b.batch){const bt=str(b.batch,100); /* withdraw an announcement: unpaid charges are voided, charges with a payment awaiting approval are kept */
+  await env.DB.batch([sq(env,"UPDATE fee_due SET status='void' WHERE sub=?1 AND batch=?2 AND status='due' AND id NOT IN (SELECT due_id FROM fee_pay WHERE sub=?1 AND status='pending')",sub,bt),
+   sq(env,"DELETE FROM fee_pay WHERE sub=?1 AND status='draft' AND due_id IN (SELECT id FROM fee_due WHERE sub=?1 AND batch=?2 AND status='void')",sub,bt)]);return J({ok:true})}
+ throw new Err(400,'nothing to do')}
+async function feeQueue(C){const s=await need(C,['Admin','Accountant']),{env}=C,sub=s.sub;await feeTick(C,sub);
+ const[q,h,bt,ru]=await env.DB.batch([
+  sq(env,"SELECT p.id,p.sid,p.method,p.cur,p.amt,p.from_no,p.rcv_no,p.trx,p.created,f.cat,f.title,f.amt dueAmt,f.cur dueCur,json_extract(o.d,'$.stu.name') stu,json_extract(o.d,'$.stu.cls') cls FROM fee_pay p JOIN fee_due f ON f.id=p.due_id LEFT JOIN portal o ON o.sub=p.sub AND o.sid=p.sid WHERE p.sub=? AND p.status='pending' ORDER BY p.created LIMIT 200",sub),
+  sq(env,"SELECT p.id,p.sid,p.status,p.method,p.cur,p.amt,p.trx,p.updated,p.reason,f.cat,f.title,json_extract(o.d,'$.stu.name') stu FROM fee_pay p JOIN fee_due f ON f.id=p.due_id LEFT JOIN portal o ON o.sub=p.sub AND o.sid=p.sid WHERE p.sub=? AND p.status IN ('approved','rejected') ORDER BY p.updated DESC LIMIT 20",sub),
+  sq(env,"SELECT batch,cat,title,amt,cur,MIN(publish_at) at,COUNT(*) n,SUM(status='due') open FROM fee_due WHERE sub=? AND status<>'void' GROUP BY batch ORDER BY MAX(publish_at) DESC LIMIT 15",sub),
+  sq(env,'SELECT id,cat,title,amt,cur,cls,next_at FROM fee_rule WHERE sub=? AND active=1 ORDER BY next_at LIMIT 20',sub)]);
+ return J({ok:true,role:s.role,count:q.results.length,pending:q.results,recent:h.results,batches:bt.results,rules:ru.results,now:Date.now()})}
+async function feeDecide(C){const s=await need(C,['Admin','Accountant']),{env,b}=C,sub=s.sub,id=str(b.id,40);
+ if(hitMem('fdc:'+sub,600,3600000))throw new Err(429,'rate limited');
+ const p=await sq(env,'SELECT p.*,f.cat,f.title,f.id fid FROM fee_pay p JOIN fee_due f ON f.id=p.due_id WHERE p.id=? AND p.sub=?',id,sub).first();
+ if(!p)throw new Err(404,'payment not found');if(p.status!=='pending')throw new Err(409,'This payment was already '+p.status);
+ const now=Date.now(),st=await sq(env,"SELECT json_extract(d,'$.stu.name') n,json_extract(d,'$.stu.cls') c FROM portal WHERE sub=? AND sid=?",sub,p.sid).first().catch(()=>null),stu=str(st&&st.n,80)||p.sid,ttl=p.title||p.cat,who=str(s.ph,60);
+ if(b.act==='reject'){const reason=str(b.reason,160);
+  const r=await sq(env,"UPDATE fee_pay SET status='rejected',reason=?,decided_by=?,decided_at=?,updated=? WHERE id=? AND sub=? AND status='pending'",reason,who,now,now,id,sub).run();
+  if(!(r.meta&&r.meta.changes))throw new Err(409,'This payment was already decided');
+  bg(C,inApp(env,sub,[{sid:p.sid,ev:'Fee payment',msg:'❌ পেমেন্ট যাচাই হয়নি / Payment not verified: '+ttl+' ('+p.trx+')'+(reason?' — '+reason:'')+'. আবার চেষ্টা করুন / Please try again.'}],C));
+  return J({ok:true,status:'rejected'})}
+ if(b.act!=='approve')throw new Err(400,'invalid action');
+ const im=await instInfo(env,sub),code=rnd(12),no='RCT-'+new Date(now).toISOString().slice(0,10).replace(/-/g,'')+'-'+code.slice(0,6).toUpperCase(),sig=await feeSig(env,{code,no,sub,sid:p.sid,amt:p.amt,cur:p.cur,method:p.method,trx:p.trx,at:now});
+ /* one atomic batch: the receipt and the Paid mark are written only while the payment is still pending, so a double click or two accountants can never create two receipts */
+ const rs=await env.DB.batch([
+  sq(env,"INSERT INTO fee_receipt(code,no,pay_id,sub,sid,inst,stu,cls,cat,title,amt,cur,method,from_no,rcv_no,trx,pat,at,sig,appr) SELECT ?1,?2,p.id,p.sub,p.sid,?3,?4,?5,?6,?7,p.amt,p.cur,p.method,p.from_no,p.rcv_no,p.trx,p.created,?8,?9,?10 FROM fee_pay p WHERE p.id=?11 AND p.sub=?12 AND p.status='pending'",code,no,im.n,stu,str(st&&st.c,40),p.cat,p.title||'',now,sig,who,id,sub),
+  sq(env,"UPDATE fee_due SET status='paid',paid_at=?1 WHERE id=?2 AND sub=?3 AND EXISTS(SELECT 1 FROM fee_pay WHERE id=?4 AND sub=?3 AND status='pending')",now,p.fid,sub,id),
+  sq(env,"UPDATE fee_pay SET status='approved',decided_by=?1,decided_at=?2,updated=?2 WHERE id=?3 AND sub=?4 AND status='pending'",who,now,id,sub)]);
+ if(!(rs[2].meta&&rs[2].meta.changes))throw new Err(409,'This payment was already decided');
+ const link=C.u.origin+'/api/fee/verify?c='+code,amt=p.amt+' '+p.cur;
+ /* internal message (chat) + in-app notification + web push for the guardian; the permanent copy is the fee_receipt row */
+ await sq(env,'INSERT INTO portal_out(sub,sid,k,x,u,at) VALUES(?,?,?,?,?,?)',sub,p.sid,'m',('🧾 পেমেন্ট নিশ্চিত হয়েছে / Payment confirmed\n'+im.n+'\n'+stu+' · '+ttl+' · '+amt+'\n'+p.method+' · TrxID '+p.trx+'\nরসিদ / Receipt: '+no+'\nযাচাই / Verify: '+link).slice(0,1000),0,now).run().catch(()=>{});
+ bg(C,inApp(env,sub,[{sid:p.sid,ev:'Fee receipt',msg:'✅ '+ttl+' — '+amt+' পরিশোধিত / paid. রসিদ / Receipt '+no}],C));
+ return J({ok:true,status:'approved',code,no,link})}
+
+/* ---- guardian / student ---- */
+async function feeMine(C){const t=await feeWho(C),{env}=C;
+ if(hitMem('fmn:'+t.sub+':'+t.sid,90,60000))throw new Err(429,'rate limited');
+ await feeTick(C,t.sub);
+ const[a,d,r,c]=await env.DB.batch([
+  sq(env,"SELECT json_extract(d,'$.stu.name') n,json_extract(d,'$.stu.cls') c,json_extract(d,'$.inst.name') i FROM portal WHERE sub=? AND sid=?",t.sub,t.sid),
+  sq(env,"SELECT f.id,f.cat,f.title,f.amt,f.cur,f.due_on,f.publish_at,p.id pid,p.status ps,p.method,p.cur pcur,p.from_no,p.trx,(SELECT x.reason FROM fee_pay x WHERE x.due_id=f.id AND x.status='rejected' ORDER BY x.updated DESC LIMIT 1) rej FROM fee_due f LEFT JOIN fee_pay p ON p.due_id=f.id AND p.status IN ('draft','pending') WHERE f.sub=? AND f.sid=? AND f.status='due' AND f.publish_at<=? ORDER BY f.publish_at DESC LIMIT 100",t.sub,t.sid,Date.now()),
+  sq(env,'SELECT code,no,inst,stu,sid,cls,cat,title,amt,cur,method,from_no,rcv_no,trx,pat,at FROM fee_receipt WHERE sub=? AND sid=? ORDER BY at DESC LIMIT 60',t.sub,t.sid),
+  sq(env,'SELECT data FROM fee_cfg WHERE sub=?',t.sub)]);
+ const p=(a.results&&a.results[0])||{};let raw={};try{raw=JSON.parse((c.results&&c.results[0]&&c.results[0].data)||'{}')}catch{}
+ const cfg=feeCfgClean(raw),origin=C.u.origin;
+ return J({ok:true,now:Date.now(),inst:str(p.i,80)||(await instInfo(env,t.sub)).n,stu:{id:t.sid,name:str(p.n,80),cls:str(p.c,40)},cfg:feePub(cfg),
+  dues:(d.results||[]).map(x=>({id:x.id,cat:x.cat,title:x.title,amt:x.amt,cur:x.cur,due_on:x.due_on,at:x.publish_at,state:x.ps||'due',rej:x.rej||'',pay:x.pid?{method:x.method,cur:x.pcur,from:x.from_no,trx:x.trx}:null,alt:{BDT:feeConv(x.amt,x.cur,'BDT',cfg.rate),USD:feeConv(x.amt,x.cur,'USD',cfg.rate)}})),
+  receipts:(r.results||[]).map(x=>({...x,link:origin+'/api/fee/verify?c='+x.code}))})}
+async function feeDraft(C){const t=await feeWho(C),{env,b}=C;
+ if(hitMem('fdr:'+t.sub+':'+t.sid,200,3600000))throw new Err(429,'rate limited');
+ const due=await feeDue(env,t,b.due);
+ if(b.clear){await sq(env,"DELETE FROM fee_pay WHERE due_id=? AND sub=? AND sid=? AND status='draft'",due.id,t.sub,t.sid).run();return J({ok:true,cleared:true})}
+ const g=gateOf(b.method),cur=b.cur==='USD'?'USD':'BDT';if(!FEE_ALL.includes(g)||(FEE_GLOBAL.includes(g))!==(cur==='USD'))throw new Err(400,'Choose a payment method');
+ const cfg=await feeCfg(env,t.sub);if(!feeOn(cfg,g))throw new Err(422,'This method is not set up');
+ const from=str(b.from,60),trx=str(b.trx,40).toUpperCase().replace(/\s+/g,''),amt=feeConv(due.amt,due.cur,cur,cfg.rate)||0,now=Date.now(),rcv=str(cfg.m[g].no||cfg.m[g].url||cfg.m[g].note,120);
+ const upd=()=>sq(env,"UPDATE fee_pay SET method=?,cur=?,amt=?,from_no=?,trx=?,rcv_no=?,updated=? WHERE due_id=? AND sub=? AND sid=? AND status='draft'",g,cur,amt,from,trx,rcv,now,due.id,t.sub,t.sid).run();
+ const ex=await sq(env,"SELECT status FROM fee_pay WHERE due_id=? AND status IN ('draft','pending')",due.id).first();
+ if(ex&&ex.status==='pending')throw new Err(409,'Already submitted. Waiting for approval.');
+ if(ex)await upd();
+ else{try{await sq(env,"INSERT INTO fee_pay(id,sub,sid,due_id,status,method,cur,amt,from_no,rcv_no,trx,created,updated) VALUES(?,?,?,?,'draft',?,?,?,?,?,?,?,?)",'p'+rnd(9),t.sub,t.sid,due.id,g,cur,amt,from,rcv,trx,now,now).run()}catch(e){if(/UNIQUE/i.test(String(e&&e.message)))await upd();else throw e}}
+ return J({ok:true,state:'draft'})}
+async function feeSubmit(C){const t=await feeWho(C),{env,b}=C;
+ if(hitMem('fsb:'+t.sub+':'+t.sid,12,3600000)||hitMem('fsi:'+C.ip,40,3600000))throw new Err(429,'Too many attempts. Try again later.');
+ const due=await feeDue(env,t,b.due),g=gateOf(b.method),cur=b.cur==='USD'?'USD':'BDT';
+ if(!FEE_ALL.includes(g)||(FEE_GLOBAL.includes(g))!==(cur==='USD'))throw new Err(400,'Choose a payment method that matches the currency');
+ const cfg=await feeCfg(env,t.sub);if(!feeOn(cfg,g))throw new Err(422,'The institution has not set up this method yet');
+ const amt=feeConv(due.amt,due.cur,cur,cfg.rate);if(!(amt>0))throw new Err(422,'This currency is not available for this fee');
+ let from=str(b.from,60);const trx=str(b.trx,40).toUpperCase().replace(/\s+/g,'');
+ if(FEE_MFS.includes(g)){const f=from.replace(/[\s-]/g,'');if(!BDMOB.test(f))throw new Err(400,'Enter the number you paid from (11-digit mobile number)');from=f.replace(/^\+?88/,'')}
+ else if(from.length<3)throw new Err(400,'Enter the payer name, e-mail or number');
+ if(!FEE_REF.test(trx))throw new Err(400,'Enter a valid Transaction ID (TrxID)');
+ if(await sq(env,"SELECT 1 AS x FROM fee_pay WHERE sub=? AND method=? AND trx=? AND status IN ('pending','approved')",t.sub,g,trx).first())throw new Err(409,'This TrxID was already submitted');
+ const ex=await sq(env,"SELECT id,status FROM fee_pay WHERE due_id=? AND status IN ('draft','pending')",due.id).first();
+ if(ex&&ex.status==='pending')throw new Err(409,'Already submitted. Waiting for approval.');
+ const rcv=str(cfg.m[g].no||cfg.m[g].url||cfg.m[g].note,120),now=Date.now();let id;
+ try{
+  if(ex){id=ex.id;const r=await sq(env,"UPDATE fee_pay SET status='pending',method=?,cur=?,amt=?,from_no=?,trx=?,rcv_no=?,created=?,updated=? WHERE id=? AND sub=? AND sid=? AND status='draft'",g,cur,amt,from,trx,rcv,now,now,id,t.sub,t.sid).run();if(!(r.meta&&r.meta.changes))throw new Err(409,'Already submitted')}
+  else{id='p'+rnd(9);await sq(env,"INSERT INTO fee_pay(id,sub,sid,due_id,status,method,cur,amt,from_no,rcv_no,trx,created,updated) VALUES(?,?,?,?,'pending',?,?,?,?,?,?,?,?)",id,t.sub,t.sid,due.id,g,cur,amt,from,rcv,trx,now,now).run()}
+ }catch(e){if(e instanceof Err)throw e;if(/UNIQUE/i.test(String(e&&e.message)))throw new Err(409,'This TrxID was already submitted, or this fee is already waiting for approval');throw e}
+ /* alert the institution: the payment appears in the Payment Approvals queue (/api/fee/queue) and every signed-in staff device gets a push */
+ bg(C,(async()=>{const p=await sq(env,"SELECT json_extract(d,'$.stu.name') n FROM portal WHERE sub=? AND sid=?",t.sub,t.sid).first().catch(()=>null),
+  pl=await mkPl(env,C.u.origin,t.sub,{k:'fee',x:(str(p&&p.n,60)||t.sid)+' · '+(due.title||due.cat)+' · '+amt+' '+cur+' · '+g+' · '+trx,at:now,sid:''});pl.t='💳 Payment Approvals';return pushTo(env,t.sub,'s',null,pl)})());
+ return J({ok:true,id,state:'pending'})}
+
+/* ---- public verification page of one receipt: the code is a 96-bit random secret, the signature proves the row was not edited ---- */
+const feeDt=ms=>new Date(+ms).toLocaleString('en-GB',{timeZone:'Asia/Dhaka',dateStyle:'medium',timeStyle:'short'})+' (GMT+6)';
+function feeRcptHtml(r,ok){
+ const row=(a,b,v)=>`<tr><th>${E(a)}<small>${E(b)}</small></th><td>${E(v)}</td></tr>`,
+  body=!r?`<div class="bad"><h1>Receipt not found</h1><p>রসিদটি পাওয়া যায়নি। Check the link or scan the QR again.</p></div>`:
+  `<div class="${ok?'ok':'bad'}"><b>${ok?'✓ Verified receipt · যাচাইকৃত রসিদ':'✗ This receipt could not be verified · যাচাই করা যায়নি'}</b></div>
+<h1>${E(r.inst)}</h1><p class="sub">Digital Money Receipt · ডিজিটাল মানি রিসিপ্ট</p>
+<div class="amt">${E(new Intl.NumberFormat('en-US',{minimumFractionDigits:2}).format(r.amt))} <span>${E(r.cur)}</span></div>
+<table>${row('Receipt No','রসিদ নং',r.no)}${row('Student','শিক্ষার্থী',r.stu)}${row('Student ID','আইডি',r.sid)}${r.cls?row('Class','শ্রেণি',r.cls):''}${row('Fee','ফি',r.title?r.cat+' · '+r.title:r.cat)}${row('Payment method','পেমেন্ট মাধ্যম',r.method)}${row('Sender','প্রেরক',feeMask(r.from_no))}${row('Receiver','প্রাপক',r.rcv_no||'—')}${row('TrxID','ট্রানজেকশন আইডি',r.trx)}${row('Paid','পরিশোধ',feeDt(r.pat))}${row('Approved','অনুমোদন',feeDt(r.at))}</table>
+<button onclick="print()">Print · প্রিন্ট</button><p class="fine">Sender number is partly hidden on this public page. Issued by ClasSphera for the institution above.</p>`;
+ return`<!doctype html><html lang="bn"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>${r?E(r.no)+' · ':''}Receipt · ClasSphera</title><style>:root{color-scheme:dark light;--bg:#070812;--fg:#e6e9f5;--mu:#9aa1b9;--cd:rgba(255,255,255,.06);--bd:rgba(255,255,255,.14)}@media(prefers-color-scheme:light){:root{--bg:#f4f6fb;--fg:#10142b;--mu:#5b6380;--cd:#fff;--bd:#d9deee}}body{margin:0;min-height:100vh;display:grid;place-items:center;padding:16px;background:var(--bg);color:var(--fg);font:15px/1.5 Inter,system-ui,'Noto Sans Bengali',sans-serif}main{width:100%;max-width:460px;background:var(--cd);border:1px solid var(--bd);border-radius:20px;padding:22px}h1{font-size:20px;margin:12px 0 2px}.sub{color:var(--mu);margin:0 0 10px}.amt{font-size:34px;font-weight:800;margin:8px 0 14px;background:linear-gradient(90deg,#a78bfa,#22d3ee,#34d399);-webkit-background-clip:text;background-clip:text;color:transparent}.amt span{font-size:16px}table{width:100%;border-collapse:collapse}th,td{padding:8px 0;border-top:1px solid var(--bd);text-align:left;vertical-align:top;font-size:14px}th{color:var(--mu);font-weight:500;width:42%}th small{display:block;font-size:11px}td{font-weight:600;word-break:break-word}.ok,.bad{padding:9px 12px;border-radius:12px;font-size:13px}.ok{background:rgba(52,211,153,.16);color:#10b981}.bad{background:rgba(244,63,94,.14);color:#f43f5e}button{margin-top:16px;width:100%;padding:12px;border-radius:12px;border:0;background:#1e3a8a;color:#fff;font-weight:700}.fine{color:var(--mu);font-size:11px}@media print{button{display:none}body{background:#fff;color:#000}}</style></head><body><main>${body}</main></body></html>`}
+async function feeVerify(C){const{env,u,ip}=C;await migrate(env);
+ const hdr={'content-type':'text/html; charset=utf-8','cache-control':'no-store','x-robots-tag':'noindex, nofollow','x-content-type-options':'nosniff','referrer-policy':'no-referrer','x-frame-options':'DENY','content-security-policy':"default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'"};
+ if(hitMem('fv:'+ip,40,60000))return new Response('Too many requests',{status:429,headers:hdr});
+ const code=String(u.searchParams.get('c')||'').toLowerCase(),r=/^[0-9a-f]{24}$/.test(code)?await sq(env,'SELECT * FROM fee_receipt WHERE code=?',code).first():null,
+  ok=!!r&&eq(await feeSig(env,{code:r.code,no:r.no,sub:r.sub,sid:r.sid,amt:r.amt,cur:r.cur,method:r.method,trx:r.trx,at:r.at}),r.sig);
+ return new Response(feeRcptHtml(r,ok),{status:r?200:404,headers:hdr})}
+
 /* ───────────── Global Online Admission ───────────── */
 const CAL={uk:['uk','united kingdom','britain','england','scotland','wales'],bangladesh:['bangladesh'],malaysia:['malaysia'],france:['france']};
 const TYK={madrasah:'%madr%',school:'%school%',college:'%colleg%',university:'%univ%',coaching:'%coach%'};
@@ -1163,7 +1356,48 @@ const R={
  '/api/inst/search':instSearch,'/api/inst/publish':instPublish,'/api/admit/apply':admitApply,'/api/admit/inbox':admitInbox,
  '/api/ai':aiPaper,'/api/ai/report':aiReport,
  '/api/founder/system-alert':fAlert,'/api/founder/webhook':fAlert,'/api/founder/email-fallback':fMail,'/api/founder/health':fHealth,'/api/founder/payment':fPayment,'/api/founder/plan-reminders':fRemind,'/api/founder/restore':fRestore};
-const BODY_LIMIT={'/api/ws/save':30e6,'/api/ws/create':30e6,'/api/g/sync':25e6,'/api/backup':26e6,'/api/founder/restore':1e5};
+/* ───────────── payment fixes: tamper-proof receipt links + cloud-synced drafts (used by the app's Pay Now / Payment Approvals) ───────────── */
+const pzMac=async(env,j)=>(await hmac(env,'pzrcpt|'+j)).slice(0,32);
+async function pzRcSign(C){const s=await need(C,['Admin','Accountant']),{env,b}=C,j=String(b.j||'');if(!j||j.length>2000)throw new Err(400,'bad receipt');
+ let r;try{r=JSON.parse(j)}catch{throw new Err(400,'bad receipt')}
+ const rno=str(isO(r)&&r.n,40),trx=str(isO(r)&&r.t,40).toLowerCase(),ref=str(b.ref,20);if(!rno||!trx||!(+r.a>0))throw new Err(400,'bad receipt');
+ await migrate(env);const sig=await pzMac(env,j),now=Date.now(),ex=await sq(env,'SELECT ref FROM pz_receipts WHERE inst=? AND trx=?',s.sub,trx).first();
+ if(ex&&ex.ref!==ref)throw new Err(409,'duplicate_trxid'); /* the same TrxID can never back two different payments */
+ if(ex)await sq(env,'UPDATE pz_receipts SET rno=?,sig=?,at=? WHERE inst=? AND trx=?',rno,sig,now,s.sub,trx).run();
+ else await sq(env,'INSERT INTO pz_receipts(inst,trx,ref,rno,sig,revoked,at) VALUES(?,?,?,?,?,0,?)',s.sub,trx,ref,rno,sig,now).run();
+ return J({sig})}
+async function pzRcVerify(C){const{env,b}=C,j=String(b.j||''),sig=String(b.sig||'');if(!/^[0-9a-f]{32}$/.test(sig)||!j||j.length>2000)return J({ok:false});
+ const m=await pzMac(env,j);let d=0;for(let i=0;i<32;i++)d|=m.charCodeAt(i)^sig.charCodeAt(i);if(d)return J({ok:false});
+ try{await migrate(env);const r=await sq(env,'SELECT revoked FROM pz_receipts WHERE sig=?',sig).first();if(r&&r.revoked)return J({ok:false,revoked:true})}catch{}
+ return J({ok:true})}
+async function pzDraftRoute(C){const t=await feeWho(C),{env,b}=C,who=t.who==='student'?'s':'g';await migrate(env);
+ if(b.op==='get'){const r=await sq(env,'SELECT body FROM pz_drafts WHERE sub=? AND sid=? AND who=?',t.sub,t.sid,who).first();let d={};try{d=JSON.parse(r&&r.body||'{}')}catch{}return J({draft:isO(d)?d:{}})}
+ if(b.op==='put'){if(hitMem('pzd:'+t.sub+':'+t.sid,300,3600000))throw new Err(429,'rate limited');
+  const src=isO(b.draft)?b.draft:{},out={};
+  for(const id of Object.keys(src).slice(0,20)){const v=src[id];if(!isO(v)||(v.st!=='draft'&&v.st!=='pending'))continue;
+   out[str(id,60)]={st:v.st,sc:v.sc==='G'?'G':'L',m:str(v.m,20),n:str(v.n,60),t:str(v.t,40),a:Math.max(0,+v.a||0),cur:/^[A-Z]{3}$/.test(v.cur||'')?v.cur:'BDT',sub:/^P[0-9A-F]{8}$/.test(v.sub||'')?v.sub:undefined,at:+v.at||0}}
+  const body=JSON.stringify(out);if(body.length>6000)throw new Err(400,'too large');
+  await sq(env,'INSERT INTO pz_drafts(sub,sid,who,body,updated) VALUES(?,?,?,?,?) ON CONFLICT(sub,sid,who) DO UPDATE SET body=excluded.body,updated=excluded.updated',t.sub,t.sid,who,body,Date.now()).run();
+  return J({ok:true})}
+ throw new Err(400,'bad request')}
+Object.assign(R,{'/api/receipt/sign':pzRcSign,'/api/receipt/verify':pzRcVerify,'/api/g/draft':pzDraftRoute});
+Object.assign(R,{'/api/fee/mine':feeMine,'/api/fee/draft':feeDraft,'/api/fee/submit':feeSubmit,'/api/fee/queue':feeQueue,'/api/fee/decide':feeDecide,'/api/fee/announce':feeAnnounce,'/api/fee/rule':feeRuleRoute,'/api/fee/cfg':feeCfgRoute});
+/* ───────────── saved guardian / student profile: one small row per person, read once at sign-in and written only when something changes ───────────── */
+async function gvProfRoute(C){const t=await feeWho(C),{env,b}=C,who=t.who==='student'?'s':'g';await migrate(env);
+ if(b.op==='get'){const r=await sq(env,'SELECT body,updated FROM gv_prof WHERE sub=? AND sid=? AND who=?',t.sub,t.sid,who).first();let d={};try{d=JSON.parse(r&&r.body||'{}')}catch{}return J({prof:isO(d)?d:{},updated:r?+r.updated:0})}
+ if(b.op==='put'){if(hitMem('gvp:'+t.sub+':'+t.sid,60,3600000))throw new Err(429,'rate limited');
+  const src=isO(b.prof)?b.prof:{},sp=isO(src.p)?src.p:{},out={p:{},hub:{},hw:[]};
+  for(const k of Object.keys(sp).slice(0,60)){if(!/^[A-Za-z0-9_]{1,24}$/.test(k)||k==='pq'||k==='pay'||k==='__proto__')continue;const v=sp[k];
+   if(k==='sp'||k==='gp'){if(typeof v==='string'&&v.length<=200000&&/^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+\/=]+$/.test(v))out.p[k]=v;continue} /* photos: small images only */
+   const j=JSON.stringify(v===undefined?null:v);if(j.length<=20000)out.p[k]=v}
+  if(isO(src.hub)){const j=JSON.stringify(src.hub);if(j.length<=60000)out.hub=src.hub}
+  if(Array.isArray(src.hw))out.hw=src.hw.slice(-60).map(x=>str(x,200));
+  const body=JSON.stringify(out);if(body.length>380000)throw new Err(400,'too large');
+  const now=Date.now();await sq(env,'INSERT INTO gv_prof(sub,sid,who,body,updated) VALUES(?,?,?,?,?) ON CONFLICT(sub,sid,who) DO UPDATE SET body=excluded.body,updated=excluded.updated',t.sub,t.sid,who,body,now).run();
+  return J({ok:true,updated:now})}
+ throw new Err(400,'bad request')}
+Object.assign(R,{'/api/g/profile':gvProfRoute});
+const BODY_LIMIT={'/api/g/profile':4e5,'/api/ws/save':30e6,'/api/ws/create':30e6,'/api/g/sync':25e6,'/api/backup':26e6,'/api/founder/restore':1e5};
 const MUTATING=new Set(['/api/ws/save','/api/ws/create','/api/g/sync','/api/backup','/api/preferences']);
 async function api(req,env,ctx,u,ip,tenant){
  const t0=Date.now(),p=u.pathname,C={req,env,ctx,u,ip,tenant,path:p,host:u.hostname.toLowerCase(),b:{},raw:''};
@@ -1183,6 +1417,7 @@ async function api(req,env,ctx,u,ip,tenant){
     return J({url:'https://accounts.google.com/o/oauth2/v2/auth?'+new URLSearchParams({client_id:g.id,redirect_uri:u.origin+(u.searchParams.get('cb')==='auth'?'/auth/callback':'/api/oauth/google/callback'),response_type:'code',scope:'openid email profile',state:st,prompt:'select_account'})})}
    if(p==='/api/oauth/google/callback')return await oauthCallback(env,u);
    if(p==='/api/inst/logo')return await instLogo(C);
+   if(p==='/api/fee/verify')return await feeVerify(C);
    return J({error:'not found'},404)}
   if(req.method!=='POST')return J({error:'not found'},404);
   const h=R[p];if(!h)return J({error:'not found'},404);
@@ -1350,6 +1585,180 @@ var f=window.csOtp;if(typeof f==='function'&&String(f).indexOf('/api/g/otp')>-1)
   if(!j||!j.token){O.tries=(O.tries||0)+1;try{threat('OTP mismatch',O.sub)}catch(e){}if(O.tries>=3){S.otp=null;S.lock=Date.now()+60000;closeM();return toast('Too many wrong codes. Locked for a minute.')}return fail('Incorrect code. '+(3-O.tries)+' attempt(s) left')}
   S.otp=null;try{await window.csEnter(O.sub,O.ph,O.em,O.pw,j.token);toast('✅ Verified')}catch(e){closeM();toast((e&&e.error)||'Could not open the workspace. Sign in again.')}}}
 })();</script>`;
+const FEE_PAY_PATCH=String.raw`<script>(function(){
+if(window.__csFee)return;window.__csFee=1;
+var D=document,LS=window.localStorage,MFS=['bKash','Nagad','Rocket'],LOCAL=['bKash','Nagad','Rocket','SSLCommerz'],GLOB=['Visa','Mastercard','Stripe','PayPal'];
+var G={tok:'',who:'',seen:0,data:null,busy:0,pend:0},M=null,A={tok:'',deny:false,q:null,cfg:null,tab:'q',busy:0,open:false};
+var T={
+bn:{fees:'ফি',due:'বকেয়া',pay:'পরিশোধ করুন',submit:'সাবমিট',resume:'চালিয়ে যান',draft:'পেমেন্ট ড্রাফট',pending:'অনুমোদনের অপেক্ষায়',rej:'যাচাই হয়নি',close:'বন্ধ করুন',stu:'শিক্ষার্থী',id:'আইডি',
+ local:'লোকাল (BDT)',glob:'গ্লোবাল (USD)',method:'পেমেন্ট মাধ্যম',none:'এই মুদ্রার জন্য প্রতিষ্ঠান এখনো কোনো মাধ্যম চালু করেনি।',noCur:'এই মুদ্রায় পরিশোধ এখন সম্ভব নয়।',
+ how:'আপনার {m} থেকে {no} ({kind}) নম্বরে {amt} পাঠান। তারপর নিচের তথ্য দিয়ে সাবমিট করুন।',howG:'প্রতিষ্ঠানের নির্দেশনা অনুযায়ী {amt} পরিশোধ করুন, তারপর রেফারেন্স আইডি দিন।',
+ from:'যে নম্বর থেকে পরিশোধ করেছেন',trx:'ট্রানজেকশন আইডি (TrxID)',payer:'পেমেন্টকারীর নাম / ই-মেইল / নম্বর',ref:'ট্রানজেকশন / রেফারেন্স আইডি',copy:'কপি',copied:'কপি হয়েছে',open:'পেমেন্ট পেজ খুলুন',
+ sent:'✅ জমা হয়েছে। প্রতিষ্ঠান যাচাই করলে রসিদ পাবেন।',approved:'✅ আপনার পেমেন্ট অনুমোদিত হয়েছে। রসিদ দেখুন।',docs:'ডিজিটাল রসিদ',noDues:'কোনো বকেয়া নেই 🎉',receipt:'ডিজিটাল মানি রিসিপ্ট',verify:'যাচাই পেজ খুলুন',copyLink:'লিংক কপি',
+ inst:'প্রতিষ্ঠান',rno:'রসিদ নং',fee:'ফি',amt:'পরিমাণ',meth:'মাধ্যম',snd:'প্রেরকের নম্বর',rcv:'প্রাপকের নম্বর',paid:'পরিশোধের সময়',appr:'অনুমোদনের সময়',err:'কিছু ভুল হয়েছে। আবার চেষ্টা করুন।',dueOn:'শেষ তারিখ',
+ q:'পেমেন্ট অনুমোদন',ann:'ফি ঘোষণা',set:'সেটিংস',empty:'কোনো অপেক্ষমান পেমেন্ট নেই',approve:'অনুমোদন',reject:'বাতিল',why:'বাতিলের কারণ (ঐচ্ছিক)',recent:'সাম্প্রতিক',
+ cat:'ফির ধরন',title:'শিরোনাম',amount:'পরিমাণ',cur:'মুদ্রা',pub:'প্রকাশের সময় (খালি = এখনই)',tgt:'কাদের জন্য',all:'সব শিক্ষার্থী',cls:'শ্রেণি',ids:'নির্দিষ্ট আইডি',rep:'প্রতি মাসে পুনরাবৃত্তি',create:'ঘোষণা করুন',made:'শিক্ষার্থীর জন্য তৈরি হয়েছে',sched:'নির্ধারিত সময়ে প্রকাশ হবে',
+ stop:'বন্ধ',cancel:'প্রত্যাহার',save:'সংরক্ষণ',saved:'সংরক্ষিত',rate:'১ USD = কত BDT',num:'নম্বর',kind:'ধরন',link:'পেমেন্ট লিংক (https)',note:'নির্দেশনা',onlyAdmin:'শুধু অ্যাডমিন বদলাতে পারবেন',batches:'ঘোষিত ফি',rules:'মাসিক নিয়ম',
+ Mo:'মাসিক ফি',Ex:'পরীক্ষার ফি',Ad:'ভর্তি ফি',Cu:'অন্যান্য ফি'},
+en:{fees:'Fees',due:'Due',pay:'Pay Now',submit:'Submit',resume:'Resume',draft:'Payment draft',pending:'Waiting for approval',rej:'Not verified',close:'Close',stu:'Student',id:'ID',
+ local:'Local (BDT)',glob:'Global (USD)',method:'Payment method',none:'The institution has not enabled a method for this currency yet.',noCur:'Payment in this currency is not available right now.',
+ how:'From your {m}, send {amt} to {no} ({kind}). Then fill in the details below and submit.',howG:'Pay {amt} as the institution instructs, then enter the reference ID.',
+ from:'Number you paid from',trx:'Transaction ID (TrxID)',payer:'Payer name / e-mail / number',ref:'Transaction / reference ID',copy:'Copy',copied:'Copied',open:'Open payment page',
+ sent:'✅ Submitted. You will get a receipt once the institution verifies it.',approved:'✅ Your payment was approved. See your receipt.',docs:'Digital receipts',noDues:'Nothing due 🎉',receipt:'Digital Money Receipt',verify:'Open verification page',copyLink:'Copy link',
+ inst:'Institution',rno:'Receipt No',fee:'Fee',amt:'Amount',meth:'Method',snd:'Sender number',rcv:'Receiver number',paid:'Paid at',appr:'Approved at',err:'Something went wrong. Please try again.',dueOn:'Due date',
+ q:'Payment Approvals',ann:'Announce fee',set:'Settings',empty:'No payments waiting',approve:'Approve',reject:'Reject',why:'Reason for rejecting (optional)',recent:'Recent',
+ cat:'Fee type',title:'Title',amount:'Amount',cur:'Currency',pub:'Publish at (empty = now)',tgt:'For',all:'All students',cls:'A class',ids:'Specific IDs',rep:'Repeat every month',create:'Announce',made:'students charged',sched:'Will publish at the chosen time',
+ stop:'Stop',cancel:'Withdraw',save:'Save',saved:'Saved',rate:'1 USD = how many BDT',num:'Number',kind:'Type',link:'Payment link (https)',note:'Instructions',onlyAdmin:'Only the Admin can change these',batches:'Announced fees',rules:'Monthly rules',
+ Mo:'Monthly Fee',Ex:'Exam Fee',Ad:'Admission Fee',Cu:'Custom'}};
+function L(){try{var v=(typeof LNG!=='undefined'&&LNG)||JSON.parse(LS.getItem('cs_lang')||'null')||'';v=String(v).toLowerCase();return v&&v.indexOf('bn')!==0?'en':'bn'}catch(e){return'bn'}}
+function t(k){return(T[L()]||T.en)[k]||T.en[k]||k}
+function h(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})}
+function money(n,c){var v=Math.round((+n||0)*100)/100;return(v%1?v.toFixed(2):String(v))+' '+c}
+function cat(c){var m={'Monthly Fee':'Mo','Exam Fee':'Ex','Admission Fee':'Ad','Custom':'Cu'};return m[c]?t(m[c]):c}
+function dt(ms){try{return new Date(+ms).toLocaleString(L()==='bn'?'bn-BD':'en-GB',{dateStyle:'medium',timeStyle:'short'})}catch(e){return''}}
+function api(p,b,tok,keep){return fetch(p,{method:'POST',keepalive:!!keep,headers:Object.assign({'content-type':'application/json'},tok?{authorization:'Bearer '+tok}:{}),body:JSON.stringify(b||{})}).then(function(r){return r.json().catch(function(){return{}}).then(function(j){if(!r.ok){var e=new Error(j.error||'error');e.status=r.status;throw e}return j})})}
+function $(i){return D.getElementById(i)}
+function own(){return typeof window.pzCards==='function'} /* the app already ships its own fee cards / Pay Now / approvals: this layer then stays silent */
+function toast(m){var e=D.createElement('div');e.className='csf-toast';e.textContent=m;D.body.appendChild(e);setTimeout(function(){e.style.opacity='0'},3200);setTimeout(function(){e.remove()},3700)}
+
+/* ---------- styles (glass-morphism, same palette as the app) ---------- */
+var css=['.csf-fab{position:fixed;right:14px;bottom:14px;z-index:99990;display:none;gap:8px;align-items:center;padding:11px 16px;border-radius:999px;border:1px solid rgba(255,255,255,.2);background:linear-gradient(135deg,#1e3a8a,#0b1e5b);color:#fff;font:600 14px/1 inherit;box-shadow:0 10px 30px rgba(11,30,91,.55);cursor:pointer}',
+'.csf-fab.on{display:flex}.csf-b{min-width:20px;height:20px;border-radius:10px;background:#f43f5e;font-size:12px;display:grid;place-items:center;padding:0 6px}',
+'.csf-ov{position:fixed;inset:0;z-index:99995;display:none;align-items:flex-end;justify-content:center;background:rgba(5,6,16,.55);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px)}.csf-ov.on{display:flex}',
+'@media(min-width:640px){.csf-ov{align-items:center;padding:20px}}',
+'.csf-g,.csf-card{color:#e6e9f5;background:linear-gradient(160deg,rgba(30,36,74,.72),rgba(12,15,38,.8));border:1px solid rgba(255,255,255,.16);box-shadow:0 24px 70px rgba(0,0,0,.5),inset 0 1px 0 rgba(255,255,255,.12);backdrop-filter:blur(22px) saturate(150%);-webkit-backdrop-filter:blur(22px) saturate(150%);font-family:inherit}',
+'.csf-g{width:100%;max-width:480px;max-height:92vh;overflow:auto;border-radius:22px 22px 0 0;padding:18px}@media(min-width:640px){.csf-g{border-radius:22px}}',
+'.csf-g *{box-sizing:border-box}.csf-hd{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}.csf-hd b{font-size:17px}',
+'.csf-x{border:0;background:rgba(255,255,255,.1);color:#e6e9f5;width:32px;height:32px;border-radius:50%;font-size:16px;cursor:pointer}',
+'.csf-card{border-radius:18px;padding:14px;margin:0 0 12px}.csf-due{border-radius:14px;padding:12px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1)}',
+'.csf-r{display:flex;justify-content:space-between;gap:8px;align-items:center}.csf-tag{font-size:12px;padding:3px 9px;border-radius:99px;background:linear-gradient(90deg,rgba(167,139,250,.3),rgba(34,211,238,.3))}',
+'.csf-amt{font-size:26px;font-weight:800;margin:6px 0 0;background:linear-gradient(90deg,#a78bfa,#22d3ee,#34d399);-webkit-background-clip:text;background-clip:text;color:transparent}.csf-mu{color:#9aa1b9;font-size:12px}',
+'.csf-pay{display:block;width:100%;margin-top:10px;padding:13px;border-radius:14px;border:1px solid rgba(147,197,253,.35);background:linear-gradient(180deg,#1e3a8a,#0b1e5b);color:#fff;font:700 15px/1 inherit;cursor:pointer;box-shadow:0 8px 22px rgba(11,30,91,.5)}.csf-pay:disabled{opacity:.55;cursor:default}',
+'.csf-st{display:inline-block;margin-top:8px;font-size:12px;padding:3px 10px;border-radius:99px}.csf-st.d{background:rgba(251,191,36,.18);color:#fbbf24}.csf-st.p{background:rgba(34,211,238,.16);color:#22d3ee}.csf-st.j{background:rgba(244,63,94,.16);color:#fb7185}',
+'.csf-seg{display:flex;gap:6px;margin:8px 0}.csf-seg button,.csf-chip{flex:1;padding:10px;border-radius:12px;border:1px solid rgba(255,255,255,.16);background:rgba(255,255,255,.06);color:#e6e9f5;font:600 13px/1 inherit;cursor:pointer}.csf-seg button.on,.csf-chip.on{background:linear-gradient(135deg,#1e3a8a,#0b1e5b);border-color:#60a5fa}',
+'.csf-chips{display:grid;grid-template-columns:repeat(2,1fr);gap:6px;margin:6px 0}.csf-box{margin:10px 0;padding:11px;border-radius:12px;background:rgba(34,211,238,.08);border:1px solid rgba(34,211,238,.25);font-size:13px;line-height:1.5}',
+'.csf-g label{display:block;margin:10px 0 4px;font-size:12px;color:#9aa1b9}.csf-g input,.csf-g select,.csf-g textarea{width:100%;padding:11px 12px;border-radius:12px;border:1px solid rgba(255,255,255,.18);background:rgba(7,8,18,.55);color:#e6e9f5;font:15px inherit;outline:0}.csf-g input:focus,.csf-g select:focus{border-color:#22d3ee}',
+'.csf-err{margin-top:10px;color:#fb7185;font-size:13px;min-height:18px}.csf-sm{padding:8px 12px;border-radius:10px;border:1px solid rgba(255,255,255,.18);background:rgba(255,255,255,.08);color:#e6e9f5;font:600 12px inherit;cursor:pointer}',
+'.csf-ok{background:#059669!important;border-color:#34d399!important}.csf-no{background:rgba(244,63,94,.25)!important}.csf-tb{display:flex;gap:6px;margin-bottom:10px}.csf-tb button{flex:1;padding:9px 4px;border-radius:10px;border:1px solid rgba(255,255,255,.16);background:rgba(255,255,255,.06);color:#e6e9f5;font:600 12px inherit}.csf-tb button.on{background:#1e3a8a}',
+'.csf-kv{display:flex;justify-content:space-between;gap:10px;padding:7px 0;border-top:1px solid rgba(255,255,255,.1);font-size:13px}.csf-kv span:first-child{color:#9aa1b9}.csf-kv span:last-child{font-weight:600;text-align:right;word-break:break-all}',
+'.csf-toast{position:fixed;left:50%;bottom:80px;transform:translateX(-50%);z-index:99999;max-width:90vw;padding:11px 16px;border-radius:14px;background:rgba(15,20,50,.92);color:#fff;border:1px solid rgba(255,255,255,.2);font:600 14px inherit;transition:opacity .4s}'].join('');
+var st=D.createElement('style');st.textContent=css;D.head.appendChild(st);
+var root=D.createElement('div');root.id='csf-root';root.innerHTML='<button class="csf-fab" id="csf-fab" data-csf="sheet"></button><div class="csf-ov" id="csf-sheet"></div><div class="csf-ov" id="csf-modal"></div>';
+function ready(f){D.body?f():D.addEventListener('DOMContentLoaded',f)}ready(function(){D.body.appendChild(root)});
+
+/* ---------- guardian / student: dues, Pay Now, payment modal ---------- */
+function setTok(tk,who){if(!/^[0-9a-f]{48}$/.test(tk||''))return;G.seen=Date.now();if(G.tok!==tk){G.tok=tk;G.who=who||G.who;G.data=null;refresh()}ui()}
+var of=window.fetch;window.fetch=function(u,o){var p=of.apply(this,arguments);try{var url=typeof u==='string'?u:(u&&u.url)||'';
+ if(url.indexOf('/api/g/login')>-1)p.then(function(r){return r.clone().json()}).then(function(j){if(j&&j.token)setTok(j.token,j.who)}).catch(function(){});
+ else if(url.indexOf('/api/g/')>-1&&o&&typeof o.body==='string'){var b=JSON.parse(o.body);if(b&&b.token)setTok(b.token,'')}}catch(e){}return p};
+window.csFee={token:setTok,logout:function(){G.tok='';G.data=null;ui()},open:function(){act('sheet')},refresh:function(){refresh()}};
+function anchor(){return D.querySelector('[data-cs-fee],#cs-fee-due')}
+function live(){return G.tok&&Date.now()-G.seen<9e5}
+function refresh(){if(own()||!G.tok||G.busy)return;G.busy=1;api('/api/fee/mine',{token:G.tok}).then(function(j){G.busy=0;var pv=G.data;G.data=j;
+  if(pv&&j.receipts.length>pv.receipts.length)toast(t('approved'));G.pend=j.dues.some(function(d){return d.state==='pending'});ui()}).catch(function(e){G.busy=0;if(e.status===401){G.tok='';G.data=null;ui()}})}
+var n=0;setInterval(function(){n++;if(G.tok&&!D.hidden&&live()&&(G.pend||n%2===0))refresh();stPoll()},12000);
+D.addEventListener('visibilitychange',function(){if(!D.hidden){refresh();stPoll()}});
+function card(d){var s=d.state,nm=G.data.stu.name||G.data.stu.id,b='';
+ if(s==='draft')b='<span class="csf-st d">'+t('draft')+'</span>';else if(s==='pending')b='<span class="csf-st p">⏳ '+t('pending')+'</span>';else if(d.rej)b='<span class="csf-st j">'+t('rej')+': '+h(d.rej)+'</span>';
+ return'<div class="csf-card"><div class="csf-due"><div class="csf-r"><b>'+h(nm)+'</b><span class="csf-tag">'+h(cat(d.cat))+'</span></div>'+(d.title?'<div class="csf-mu">'+h(d.title)+'</div>':'')+
+  '<div class="csf-mu" style="margin-top:6px">'+t('due')+'</div><div class="csf-amt">'+h(money(d.amt,d.cur))+'</div>'+(d.due_on?'<div class="csf-mu">'+t('dueOn')+': '+h(d.due_on)+'</div>':'')+b+'</div>'+
+  (s==='pending'?'<button class="csf-pay" disabled>⏳ '+t('pending')+'</button>':'<button class="csf-pay" data-csf="pay" data-id="'+h(d.id)+'">'+(s==='draft'?t('resume'):t('pay'))+'</button>')+'</div>'}
+function dues(){var d=G.data;if(!d)return'';var o=d.dues.map(card).join('')||'<div class="csf-mu" style="padding:10px 0">'+t('noDues')+'</div>';
+ if(d.receipts.length)o+='<div class="csf-hd" style="margin-top:14px"><b style="font-size:14px">🧾 '+t('docs')+'</b></div>'+d.receipts.map(function(r){return'<div class="csf-card" style="padding:10px 12px"><div class="csf-r"><div><b>'+h(r.title||cat(r.cat))+'</b><div class="csf-mu">'+h(r.no)+' · '+h(dt(r.at))+'</div></div><button class="csf-sm" data-csf="rc" data-id="'+h(r.code)+'">'+h(money(r.amt,r.cur))+' ›</button></div></div>'}).join('');return o}
+function ui(){var fab=$('csf-fab'),a=anchor(),on=live()&&G.data&&!a&&!own(),cnt=G.data?G.data.dues.length:0;
+ if(a&&live()&&G.data&&!own())a.innerHTML=dues();
+ if(fab){var stf=A.tok&&!A.deny&&A.q&&!own();fab.className='csf-fab'+((on||stf)?' on':'');fab.innerHTML=stf?'💳 '+t('q')+(A.q.count?' <span class="csf-b">'+A.q.count+'</span>':''):'💳 '+t('fees')+(cnt?' <span class="csf-b">'+cnt+'</span>':'')}
+ if(!live()&&$('csf-modal').className.indexOf('on')>-1&&M)closePay();
+ if($('csf-sheet').className.indexOf('on')>-1&&!A.edit&&A.tab!=='s')sheet()}
+function sheet(){var s=$('csf-sheet');s.className='csf-ov on';
+ if(A.tok&&!A.deny&&A.q){stSheet(s);return}
+ s.innerHTML='<div class="csf-g"><div class="csf-hd"><b>💳 '+t('fees')+'</b><button class="csf-x" data-csf="x">✕</button></div>'+dues()+'</div>'}
+
+function avail(g){return G.data.cfg.m[g]}
+function startCur(d){var c=G.data.cfg;return LOCAL.some(avail)?'BDT':GLOB.some(avail)&&d.alt.USD?'USD':'BDT'}
+function pay(id){var d=G.data.dues.filter(function(x){return x.id===id})[0];if(!d)return;var sv=null;try{sv=JSON.parse(LS.getItem('cs_fee_d:'+id)||'null')}catch(e){}
+ var p=d.pay||sv&&{method:sv.m,cur:sv.c,from:sv.f,trx:sv.x}||{};M={d:d,cur:p.cur||startCur(d),m:p.method||'',from:p.from||'',trx:p.trx||'',err:'',busy:0,tm:0,dirty:0};
+ if(!avail(M.m))M.m='';$('csf-modal').className='csf-ov on';modal()}
+function modal(){var d=M.d,c=G.data.cfg,cur=M.cur,loc=cur==='BDT',list=(loc?LOCAL:GLOB).filter(avail),amt=d.alt[cur],m=M.m&&avail(M.m),mfs=MFS.indexOf(M.m)>-1,body='';
+ if(amt==null)body='<div class="csf-box">'+t('noCur')+'</div>';else if(!list.length)body='<div class="csf-box">'+t('none')+'</div>';
+ else{body='<label>'+t('method')+'</label><div class="csf-chips">'+list.map(function(g){return'<button class="csf-chip'+(g===M.m?' on':'')+'" data-csf="m" data-id="'+g+'">'+g+'</button>'}).join('')+'</div>';
+  if(m){var how=mfs?t('how').replace('{m}',M.m).replace('{no}',m.no).replace('{kind}',m.kind).replace('{amt}',money(amt,cur)):t('howG').replace('{amt}',money(amt,cur));
+   body+='<div class="csf-box">'+h(how)+(m.no&&!mfs?'<div><b>'+h(m.no)+'</b></div>':'')+(m.note?'<div class="csf-mu" style="margin-top:6px">'+h(m.note)+'</div>':'')+
+    (mfs?'<div style="margin-top:8px"><button class="csf-sm" data-csf="cp" data-id="'+h(m.no)+'">📋 '+h(m.no)+' · '+t('copy')+'</button></div>':'')+
+    (m.url?'<div style="margin-top:8px"><a class="csf-sm" style="display:inline-block;text-decoration:none" target="_blank" rel="noopener" href="'+h(m.url)+'">'+t('open')+' ↗</a></div>':'')+'</div>'+
+    '<label>'+(mfs?t('from'):t('payer'))+'</label><input id="csf-from" '+(mfs?'inputmode="tel" ':'')+'autocomplete="off" value="'+h(M.from)+'">'+
+    '<label>'+(mfs?t('trx'):t('ref'))+'</label><input id="csf-trx" autocapitalize="characters" autocomplete="off" value="'+h(M.trx)+'">'+
+    '<div class="csf-err" id="csf-err">'+h(M.err)+'</div><button class="csf-pay" data-csf="submit"'+(M.busy?' disabled':'')+'>'+t('submit')+'</button>'}}
+ $('csf-modal').innerHTML='<div class="csf-g"><div class="csf-hd"><b>'+t('pay')+'</b><button class="csf-x" data-csf="cx">✕</button></div>'+
+  '<div class="csf-due"><div class="csf-r"><b>'+h(G.data.stu.name||G.data.stu.id)+'</b><span class="csf-tag">'+h(cat(d.cat))+'</span></div><div class="csf-mu">'+h(G.data.inst)+(d.title?' · '+h(d.title):'')+'</div><div class="csf-amt">'+h(amt==null?money(d.amt,d.cur):money(amt,cur))+'</div></div>'+
+  '<div class="csf-seg"><button class="'+(loc?'on':'')+'" data-csf="cur" data-id="BDT">'+t('local')+'</button><button class="'+(loc?'':'on')+'" data-csf="cur" data-id="USD">'+t('glob')+'</button></div>'+body+'</div>'}
+function draft(now){if(!M||!M.m||!G.tok)return;clearTimeout(M.tm);var f=$('csf-from'),x=$('csf-trx');if(f)M.from=f.value;if(x)M.trx=x.value;
+ try{LS.setItem('cs_fee_d:'+M.d.id,JSON.stringify({m:M.m,c:M.cur,f:M.from,x:M.trx}))}catch(e){}
+ api('/api/fee/draft',{token:G.tok,due:M.d.id,method:M.m,cur:M.cur,from:M.from,trx:M.trx},'',true).catch(function(){})}
+function sched(){if(!M)return;clearTimeout(M.tm);M.tm=setTimeout(draft,700)}
+function closePay(){if(M){draft();M=null}$('csf-modal').className='csf-ov';$('csf-modal').innerHTML='';setTimeout(refresh,400)}
+function submit(){var f=$('csf-from'),x=$('csf-trx');M.from=f?f.value:M.from;M.trx=x?x.value:M.trx;M.busy=1;M.err='';var b=document.querySelector('#csf-modal .csf-pay');if(b)b.disabled=true;
+ api('/api/fee/submit',{token:G.tok,due:M.d.id,method:M.m,cur:M.cur,from:M.from,trx:M.trx}).then(function(){try{LS.removeItem('cs_fee_d:'+M.d.id)}catch(e){}clearTimeout(M.tm);M=null;$('csf-modal').className='csf-ov';$('csf-modal').innerHTML='';toast(t('sent'));refresh()})
+ .catch(function(e){M.busy=0;M.err=e.status?e.message:t('err');var el=$('csf-err');if(el)el.textContent=M.err;if(b)b.disabled=false})}
+function receipt(code){var r=G.data.receipts.filter(function(x){return x.code===code})[0];if(!r)return;var kv=function(a,b){return'<div class="csf-kv"><span>'+a+'</span><span>'+h(b)+'</span></div>'};
+ var o=$('csf-modal');o.className='csf-ov on';o.innerHTML='<div class="csf-g"><div class="csf-hd"><b>🧾 '+t('receipt')+'</b><button class="csf-x" data-csf="rx">✕</button></div><div class="csf-amt" style="margin:0 0 8px">'+h(money(r.amt,r.cur))+'</div>'+
+  kv(t('inst'),r.inst)+kv(t('rno'),r.no)+kv(t('stu'),r.stu)+kv(t('id'),r.sid)+kv(t('fee'),r.title?cat(r.cat)+' · '+r.title:cat(r.cat))+kv(t('meth'),r.method)+kv(t('snd'),r.from_no)+kv(t('rcv'),r.rcv_no||'—')+kv('TrxID',r.trx)+kv(t('paid'),dt(r.pat))+kv(t('appr'),dt(r.at))+
+  '<div class="csf-r" style="margin-top:12px"><a class="csf-pay" style="text-align:center;text-decoration:none;margin:0" target="_blank" rel="noopener" href="'+h(r.link)+'">'+t('verify')+' ↗</a></div><button class="csf-sm" style="margin-top:8px;width:100%" data-csf="cl" data-id="'+h(r.link)+'">'+t('copyLink')+'</button></div>'}
+function copy(v){try{navigator.clipboard.writeText(v).then(function(){toast(t('copied'))},function(){toast(v)})}catch(e){toast(v)}}
+
+/* ---------- institution staff: Payment Approvals, announce fee, merchant numbers ---------- */
+function stTok(){try{return S&&S.user&&S.user.token||''}catch(e){return''}}
+function stPoll(){if(own())return;var tk=stTok();if(!tk){if(A.tok){A.tok='';A.q=null;ui()}return}if(A.tok!==tk){A.tok=tk;A.deny=false;A.q=null}if(A.deny||A.busy||D.hidden)return;A.busy=1;
+ api('/api/fee/queue',{},tk).then(function(j){A.busy=0;var pv=A.q?A.q.count:0;A.q=j;if(j.count>pv&&pv>=0&&A.seenq)toast('💳 '+t('q')+': '+j.count);A.seenq=1;ui();if(A.open&&A.tab!=='s'&&!A.edit)sheet()}).catch(function(e){A.busy=0;if(e.status===401||e.status===403){A.deny=true;ui()}})}
+function stSheet(s){var q=A.q,tb=['q','a','s'].map(function(k){return'<button class="'+(A.tab===k?'on':'')+'" data-csf="tab" data-id="'+k+'">'+t(k==='q'?'q':k==='a'?'ann':'set')+'</button>'}).join(''),b='';
+ if(A.tab==='q')b=qView(q);else if(A.tab==='a')b=annView(q);else b=setView();
+ s.innerHTML='<div class="csf-g"><div class="csf-hd"><b>💳 '+t('fees')+'</b><button class="csf-x" data-csf="x">✕</button></div><div class="csf-tb">'+tb+'</div>'+b+'</div>';if(A.tab==='s'&&!A.cfg)loadCfg()}
+function qView(q){var o=q.pending.map(function(p){return'<div class="csf-card"><div class="csf-r"><b>'+h(p.stu||p.sid)+'</b><span class="csf-tag">'+h(cat(p.cat))+'</span></div><div class="csf-mu">'+h(p.sid)+(p.cls?' · '+h(p.cls):'')+(p.title?' · '+h(p.title):'')+'</div><div class="csf-amt">'+h(money(p.amt,p.cur))+'</div>'+
+  '<div class="csf-kv"><span>'+t('meth')+'</span><span>'+h(p.method)+'</span></div><div class="csf-kv"><span>'+t('snd')+'</span><span>'+h(p.from_no)+'</span></div><div class="csf-kv"><span>'+t('rcv')+'</span><span>'+h(p.rcv_no||'—')+'</span></div><div class="csf-kv"><span>TrxID</span><span>'+h(p.trx)+'</span></div><div class="csf-mu">'+h(dt(p.created))+'</div>'+
+  '<div class="csf-r" style="margin-top:10px"><button class="csf-sm csf-ok" style="flex:2;padding:12px" data-csf="ap" data-id="'+h(p.id)+'">✓ '+t('approve')+'</button><button class="csf-sm csf-no" style="flex:1;padding:12px" data-csf="rj" data-id="'+h(p.id)+'">✕ '+t('reject')+'</button></div></div>'}).join('')||'<div class="csf-mu" style="padding:10px 0">'+t('empty')+'</div>';
+ if(q.recent.length)o+='<div class="csf-mu" style="margin:10px 0 4px">'+t('recent')+'</div>'+q.recent.map(function(p){return'<div class="csf-kv"><span>'+(p.status==='approved'?'✅':'❌')+' '+h(p.stu||p.sid)+' · '+h(p.title||cat(p.cat))+'</span><span>'+h(money(p.amt,p.cur))+'</span></div>'}).join('');return o}
+function annView(q){var o='<label>'+t('cat')+'</label><select id="fa-cat"><option value="Monthly Fee">'+t('Mo')+'</option><option value="Exam Fee">'+t('Ex')+'</option><option value="Admission Fee">'+t('Ad')+'</option><option value="Custom">'+t('Cu')+'</option></select>'+
+ '<label>'+t('title')+'</label><input id="fa-title" maxlength="80"><div class="csf-r"><div style="flex:2"><label>'+t('amount')+'</label><input id="fa-amt" type="number" min="1" step="0.01" inputmode="decimal"></div><div style="flex:1"><label>'+t('cur')+'</label><select id="fa-cur"><option>BDT</option><option>USD</option></select></div></div>'+
+ '<label>'+t('dueOn')+'</label><input id="fa-due" type="date"><label>'+t('pub')+'</label><input id="fa-at" type="datetime-local">'+
+ '<label>'+t('tgt')+'</label><select id="fa-t"><option value="all">'+t('all')+'</option><option value="cls">'+t('cls')+'</option><option value="ids">'+t('ids')+'</option></select><input id="fa-tv" placeholder="Class 5 / ID1, ID2" style="margin-top:6px">'+
+ '<label style="display:flex;gap:8px;align-items:center"><input id="fa-rep" type="checkbox" style="width:auto"> '+t('rep')+'</label><div class="csf-err" id="fa-err"></div><button class="csf-pay" data-csf="an">'+t('create')+'</button>';
+ if(q.batches.length)o+='<div class="csf-mu" style="margin:14px 0 4px">'+t('batches')+'</div>'+q.batches.map(function(b){return'<div class="csf-kv"><span>'+h(b.title||cat(b.cat))+' · '+h(money(b.amt,b.cur))+' · '+b.n+(b.open?' ('+b.open+' '+t('due')+')':'')+'</span><span>'+(b.open?'<button class="csf-sm" data-csf="vb" data-id="'+h(b.batch)+'">'+t('cancel')+'</button>':'')+'</span></div>'}).join('');
+ if(q.rules.length)o+='<div class="csf-mu" style="margin:14px 0 4px">'+t('rules')+'</div>'+q.rules.map(function(r){return'<div class="csf-kv"><span>'+h(r.title||cat(r.cat))+' · '+h(money(r.amt,r.cur))+'</span><span><button class="csf-sm" data-csf="vr" data-id="'+h(r.id)+'">'+t('stop')+'</button></span></div>'}).join('');return o}
+function loadCfg(){api('/api/fee/cfg',{},A.tok).then(function(j){A.cfg=j.cfg;sheet()}).catch(function(){})}
+function setView(){var c=A.cfg;if(!c)return'<div class="csf-mu">…</div>';var o='';
+ MFS.forEach(function(g){var m=c.m[g];o+='<label>'+g+' · '+t('num')+'</label><div class="csf-r"><input data-fc="'+g+'.no" value="'+h(m.no)+'" inputmode="tel" style="flex:2"><select data-fc="'+g+'.kind" style="flex:1">'+['Personal','Agent','Merchant'].map(function(k){return'<option'+(m.kind===k?' selected':'')+'>'+k+'</option>'}).join('')+'</select></div>'});
+ ['SSLCommerz'].concat(GLOB).forEach(function(g){var m=c.m[g];o+='<label>'+g+'</label><input data-fc="'+g+'.url" placeholder="'+t('link')+'" value="'+h(m.url)+'"><input data-fc="'+g+'.no" placeholder="'+t('num')+'" value="'+h(m.no)+'" style="margin-top:6px"><input data-fc="'+g+'.note" placeholder="'+t('note')+'" value="'+h(m.note)+'" style="margin-top:6px">'});
+ return o+'<label>'+t('rate')+'</label><input data-fc="rate" type="number" step="0.01" value="'+(c.rate||'')+'"><div class="csf-err" id="fs-err"></div><button class="csf-pay" data-csf="sv">'+t('save')+'</button>'}
+function stCall(p,b,done){api(p,b,A.tok).then(function(j){A.busy=0;stPoll();if(done)done(j)}).catch(function(e){toast(e.message||t('err'))})}
+
+/* ---------- one click handler for everything ---------- */
+function act(a,el){var id=el&&el.getAttribute('data-id');
+ if(a==='sheet'){A.open=true;sheet()}
+ else if(a==='x'){A.open=false;A.edit=0;$('csf-sheet').className='csf-ov'}
+ else if(a==='pay')pay(id);
+ else if(a==='m'){M.m=id;draft();modal()}
+ else if(a==='cur'){M.cur=id;M.m='';modal()}
+ else if(a==='submit')submit();
+ else if(a==='cx')closePay();
+ else if(a==='rc')receipt(id);
+ else if(a==='rx'){$('csf-modal').className='csf-ov';$('csf-modal').innerHTML=''}
+ else if(a==='cp'||a==='cl')copy(id);
+ else if(a==='tab'){A.tab=id;A.edit=0;sheet()}
+ else if(a==='ap')stCall('/api/fee/decide',{id:id,act:'approve'},function(){toast('✅')});
+ else if(a==='rj'){var r=window.prompt(t('why'),'');if(r===null)return;stCall('/api/fee/decide',{id:id,act:'reject',reason:r},function(){toast('✕')})}
+ else if(a==='vb')stCall('/api/fee/rule',{batch:id});
+ else if(a==='vr')stCall('/api/fee/rule',{rule:id});
+ else if(a==='an'){var v=function(i){return($(i)||{}).value||''},tg=v('fa-t'),at=v('fa-at')?new Date(v('fa-at')).getTime():0,b={cat:v('fa-cat'),title:v('fa-title'),amt:v('fa-amt'),cur:v('fa-cur'),due_on:v('fa-due'),at:at,repeat:$('fa-rep').checked?'monthly':''};
+  if(tg==='cls')b.cls=v('fa-tv');if(tg==='ids')b.sids=v('fa-tv');api('/api/fee/announce',b,A.tok).then(function(j){toast(j.scheduled&&!j.created?t('sched'):j.created+' '+t('made'));A.busy=0;stPoll();A.tab='q';sheet()}).catch(function(e){var el=$('fa-err');if(el)el.textContent=e.message||t('err')})}
+ else if(a==='sv'){var c=JSON.parse(JSON.stringify(A.cfg));D.querySelectorAll('#csf-sheet [data-fc]').forEach(function(i){var p=i.getAttribute('data-fc').split('.');if(p.length===1)c.rate=+i.value||0;else c.m[p[0]][p[1]]=i.value});
+  api('/api/fee/cfg',{set:c},A.tok).then(function(j){A.cfg=j.cfg;toast(t('saved'))}).catch(function(e){var el=$('fs-err');if(el)el.textContent=e.message==='Only the Admin can change merchant numbers'?t('onlyAdmin'):(e.message||t('err'))})}}
+D.addEventListener('click',function(e){var b=e.target.closest&&e.target.closest('[data-csf]');if(b){e.preventDefault();act(b.getAttribute('data-csf'),b);return}
+ var ov=e.target;if(ov&&ov.id==='csf-modal'&&M)closePay();else if(ov&&ov.id==='csf-sheet'){A.open=false;ov.className='csf-ov'}},true);
+D.addEventListener('input',function(e){var i=e.target&&e.target.id;if(M&&(i==='csf-from'||i==='csf-trx')){M[i==='csf-from'?'from':'trx']=e.target.value;sched()}if(i&&i.indexOf('fa-')===0)A.edit=1});
+window.addEventListener('pagehide',function(){if(M)draft()});
+D.addEventListener('visibilitychange',function(){if(D.hidden&&M)draft()});
+})();
+</script>`; /* guardian / student fee cards, Pay Now modal, draft recovery, receipts; staff Payment Approvals */
 const htmlHeaders=(main,more={})=>({'content-type':'text/html; charset=utf-8','cache-control':'public, max-age=0, must-revalidate','x-content-type-options':'nosniff','x-frame-options':'DENY','referrer-policy':'strict-origin-when-cross-origin','strict-transport-security':'max-age=31536000','permissions-policy':'camera=(), microphone=(self), geolocation=()',...(main?{}:{'x-robots-tag':'noindex, nofollow'}),...more});
 const file=(body,type,main,ttl=3600,more={})=>new Response(body,{headers:{'content-type':type+'; charset=utf-8','cache-control':ttl?'public, max-age='+ttl:'no-cache','x-content-type-options':'nosniff',...(main?{}:{'x-robots-tag':'noindex, nofollow'}),...more}});
 const notFound=()=>new Response('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>Page not found | ClasSphera</title><style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#070812;color:#e6e9f5;font-family:Inter,system-ui,sans-serif;text-align:center;padding:1rem}a{color:#34d399}</style></head><body><main><h1>Page not found</h1><p><a href="/">Back to ClasSphera</a></p></main></body></html>',{status:404,headers:htmlHeaders(false,{'cache-control':'no-store'})});
@@ -1370,7 +1779,7 @@ async function page(req,env,ctx,u,main,p,o){
  const out=rw2.on('head',{element(e){e.append('<link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="manifest" href="/manifest.webmanifest"><meta property="og:image" content="'+SITE+'/icon-512.png"><meta name="twitter:image" content="'+SITE+'/icon-512.png"><meta property="og:locale" content="en"><meta name="cs-app-version" content="'+APP_V+'">'+(o.sub?'':'<meta name="keywords" content="ClasSphera, Classphera, class sphera, QVMPXT, school management software, madrasah management, institution management system, student attendance, marksheet, fee collection, '+BN_KW+'">')+LD(o.sub?{...p,path:'/',title:T.title,desc:T.desc}:{...p,bn:1})+BOOT()+tenantJs+'<style>body:not([data-view="home"]) #cs-nav{display:none!important}</style>',{html:true})}})
   .on('main#app',{element(e){e.setInnerContent(p.body(),{html:true})}})
   .on('footer#foot',{element(e){if(p.path==='/'&&!o.sub)e.after(NAV,{html:true})}})
-  .on('body',{element(e){e.append(CLIENT_PATCH,{html:true})}}).transform(base);
+  .on('body',{element(e){e.append(CLIENT_PATCH+FEE_PAY_PATCH,{html:true})}}).transform(base);
  const buf=await out.arrayBuffer();
  if(cache&&ctx&&ctx.waitUntil)ctx.waitUntil(cache.put(ck,new Response(buf,{headers:{'content-type':'text/html; charset=utf-8','cache-control':'public, max-age=120'}})).catch(()=>{}));
  return new Response(buf,{status:200,headers:htmlHeaders(main)})}
